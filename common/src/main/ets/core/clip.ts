@@ -333,6 +333,20 @@ export interface ReIngestOptions {
   readonly forceNew?: boolean;
 }
 
+/**
+ * 图片摄取输入（S2-3 分享接收）。字节已复制入 blob CAS 后才调用，
+ * 这里只承载引用事实：正文（rawText）恒为空，绝不保存外部临时 URI（设计 §4.1）。
+ */
+export interface IngestImageInput {
+  /** 图片内容摘要 = blob CAS 寻址键 */
+  readonly sha256: string;
+  readonly sizeBytes: number;
+  readonly mime: string;
+  readonly entry: ClipEntry;
+  readonly originApp?: string;
+  readonly capturedAtMs?: number;
+}
+
 export class ClipIngestService {
   private readonly policy: IngestPolicy;
   private readonly detector: SensitivityDetector = new SensitivityDetector();
@@ -432,6 +446,65 @@ export class ClipIngestService {
       truncated: cut.truncated,
     });
     return { merged: false, decision, item, reasons };
+  }
+
+  /**
+   * 图片摄取（与 ingest 同一条管线的二进制分支，S2-3）。
+   * 口径：复用同一幂等记忆表（规范化版本 + 内容类型 + 内容摘要 + 时间窗）；
+   * 二进制无法做文本敏感特征扫描，reasons 如实标注 `sensitivity_check:not_applicable_binary`，
+   * UI 不得宣称图片已过敏感检测。图片一律 AUTO_PERSIST（字节已核验入 CAS，内容即用户选定）。
+   */
+  async ingestImage(input: IngestImageInput, options?: ReIngestOptions): Promise<IngestOutcome> {
+    const forceNew: boolean = options !== undefined && options.forceNew === true;
+    const reasons: string[] = ['kind:image_binary', 'sensitivity_check:not_applicable_binary'];
+
+    const capturedAtMs: number = input.capturedAtMs === undefined ? this.deps.clock.nowMs() : input.capturedAtMs;
+    const item: ClipboardItem = {
+      id: uuidv7(this.deps.clock, this.deps.random),
+      kind: ClipKind.IMAGE,
+      rawText: '',
+      structuredJson: JSON.stringify({ ref: input.sha256, mime: input.mime, size: input.sizeBytes }),
+      originApp: input.originApp,
+      sha256: input.sha256,
+      capturedAtMs,
+      expiresAtMs: capturedAtMs + this.policy.inboxTtlMs,
+      sensitivity: Sensitivity.NONE,
+      state: InboxState.PENDING,
+      entry: input.entry,
+      truncated: false,
+      originalByteLength: input.sizeBytes,
+    };
+
+    const key: string = this.dedupeKey(input.sha256, ClipKind.IMAGE);
+    if (!forceNew) {
+      const hit: DedupeEntry | undefined = this.recent.get(key);
+      if (hit !== undefined && capturedAtMs - hit.tsMs <= this.policy.dedupeWindowMs) {
+        hit.tsMs = capturedAtMs;
+        this.touch(key, hit);
+        this.deps.logger.log(LogLevel.DEBUG, 'clip_ingest_merged', {
+          kind: ClipKind.IMAGE,
+          entry: input.entry,
+          sensitivity: Sensitivity.NONE,
+        });
+        return {
+          merged: true,
+          decision: IngestDecision.AUTO_PERSIST,
+          item: hit.item,
+          reasons: reasons.concat(['dedupe:merged_within_window']),
+        };
+      }
+    }
+
+    this.remember(key, { tsMs: capturedAtMs, item });
+    this.deps.logger.log(LogLevel.INFO, 'clip_ingest', {
+      kind: ClipKind.IMAGE,
+      entry: input.entry,
+      sensitivity: Sensitivity.NONE,
+      decision: IngestDecision.AUTO_PERSIST,
+      bytes: input.sizeBytes,
+      truncated: false,
+    });
+    return { merged: false, decision: IngestDecision.AUTO_PERSIST, item, reasons };
   }
 
   /** 清空幂等记忆（例如用户在设置中关闭/开启采集时） */

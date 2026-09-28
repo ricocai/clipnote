@@ -24,7 +24,7 @@ import {
   Note,
   NoteSource,
 } from './model';
-import { ClipIngestService } from './clip';
+import { ClipIngestService, IngestImageInput } from './clip';
 import { InboxRepository } from './data/inbox-repository';
 import { NoteRepository } from './data/note-repository';
 import { IClock, ILogger, LogLevel } from './ports';
@@ -90,6 +90,21 @@ export class InboxService {
     if (outcome.decision === IngestDecision.REQUIRE_CONFIRM) {
       return { kind: CaptureKind.PENDING_CONFIRM, item: outcome.item, reasons: outcome.reasons, evicted: 0 };
     }
+    if (outcome.merged) {
+      return { kind: CaptureKind.MERGED, item: outcome.item, reasons: outcome.reasons, evicted: 0 };
+    }
+    await this.deps.inbox.save(outcome.item);
+    const evicted: number = await this.housekeep();
+    return { kind: CaptureKind.PERSISTED, item: outcome.item, reasons: outcome.reasons, evicted };
+  }
+
+  /**
+   * 图片摄取的落盘路径（S2-3）。前提：字节已复制入 blob CAS 并核验（见 ShareIntakeService），
+   * 本方法只负责幂等去重 → 收件箱暂存 → 容量/保留期整理。
+   * 图片无 REQUIRE_CONFIRM 分支：二进制不走文本敏感规则（见 ClipIngestService.ingestImage）。
+   */
+  async captureImage(input: IngestImageInput): Promise<CaptureResult> {
+    const outcome: IngestOutcome = await this.deps.ingest.ingestImage(input);
     if (outcome.merged) {
       return { kind: CaptureKind.MERGED, item: outcome.item, reasons: outcome.reasons, evicted: 0 };
     }

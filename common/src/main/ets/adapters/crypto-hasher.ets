@@ -26,4 +26,11 @@ export class CryptoHasher implements IHasher {
     const digest: cryptoFramework.DataBlob = await md.digest();
     return toHexLower(digest.data);
   }
+
+  async sha256HexBytes(data: Uint8Array): Promise<string> {
+    const md: cryptoFramework.Md = cryptoFramework.createMd('SHA256');
+    await md.update({ data: data });
+    const digest: cryptoFramework.DataBlob = await md.digest();
+    return toHexLower(digest.data);
+  }
 }
