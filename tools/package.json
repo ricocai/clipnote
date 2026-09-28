@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.json && node --experimental-sqlite --test \"dist/tools/test/*.test.js\"",
-    "probe:g7": "tsc -p tsconfig.json && node --experimental-sqlite dist/tools/probes/g7-search.js"
+    "probe:g7": "tsc -p tsconfig.json && node --experimental-sqlite dist/tools/probes/g7-search.js",
+    "probe:g7-device": "tsc -p tsconfig.json && node dist/tools/probes/g7-search-device.js"
   },
   "dependencies": {
     "markdown-it": "^14.1.0"
