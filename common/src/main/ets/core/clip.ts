@@ -197,26 +197,30 @@ interface Rule {
   readonly id: string;
   readonly level: Sensitivity;
   readonly re: RegExp;
+  /** 面向用户的中文说明：敏感提示交互中如实展示命中原因（S2-2，设计 §4.1 落盘前提示） */
+  readonly label: string;
 }
 
 /** 强特征：一旦命中即可确信是凭证/私钥/实名标识 */
 const HIGH_RULES: Rule[] = [
-  { id: 'pem_private_key', level: Sensitivity.HIGH, re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-  { id: 'pem_openssh_private_key', level: Sensitivity.HIGH, re: /-----BEGIN OPENSSH PRIVATE KEY-----/ },
-  { id: 'aws_access_key_id', level: Sensitivity.HIGH, re: /\b(AKIA|ASIA)[0-9A-Z]{16}\b/ },
-  { id: 'github_token', level: Sensitivity.HIGH, re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/ },
-  { id: 'slack_token', level: Sensitivity.HIGH, re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
-  { id: 'google_api_key', level: Sensitivity.HIGH, re: /\bAIza[0-9A-Za-z\-_]{35}\b/ },
-  { id: 'openai_style_key', level: Sensitivity.HIGH, re: /\bsk-[A-Za-z0-9]{16,}\b/ },
+  { id: 'pem_private_key', level: Sensitivity.HIGH, re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/, label: '私钥块（PEM）' },
+  { id: 'pem_openssh_private_key', level: Sensitivity.HIGH, re: /-----BEGIN OPENSSH PRIVATE KEY-----/, label: 'OpenSSH 私钥块' },
+  { id: 'aws_access_key_id', level: Sensitivity.HIGH, re: /\b(AKIA|ASIA)[0-9A-Z]{16}\b/, label: 'AWS Access Key' },
+  { id: 'github_token', level: Sensitivity.HIGH, re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/, label: 'GitHub Token' },
+  { id: 'slack_token', level: Sensitivity.HIGH, re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/, label: 'Slack Token' },
+  { id: 'google_api_key', level: Sensitivity.HIGH, re: /\bAIza[0-9A-Za-z\-_]{35}\b/, label: 'Google API Key' },
+  { id: 'openai_style_key', level: Sensitivity.HIGH, re: /\bsk-[A-Za-z0-9]{16,}\b/, label: 'API 密钥（sk-…）' },
   {
     id: 'jwt',
     level: Sensitivity.HIGH,
     re: /\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b/,
+    label: 'JWT 令牌',
   },
   {
     id: 'cn_id_card',
     level: Sensitivity.HIGH,
     re: /\b[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b/,
+    label: '身份证号',
   },
 ];
 
@@ -226,28 +230,48 @@ const CONTEXT_RULES: Rule[] = [
     id: 'otp_code',
     level: Sensitivity.SUSPECTED,
     re: /(验证码|校验码|动态码|口令|verification\s*code|verify\s*code|one[\s-]*time\s*(password|code)|\bOTP\b|\b2FA\b)[\s:：是为]{0,4}\d{4,8}\b/i,
+    label: '验证码/动态口令',
   },
   {
     id: 'password_assignment',
     level: Sensitivity.SUSPECTED,
     re: /(password|passwd|pwd|密码|口令|secret)\s*[:=：]\s*\S{4,}/i,
+    label: '密码赋值',
   },
   {
     id: 'bearer_token',
     level: Sensitivity.SUSPECTED,
     re: /\bAuthorization\s*:\s*Bearer\s+\S{16,}/i,
+    label: 'Bearer 令牌',
   },
   {
     id: 'bank_card_like',
     level: Sensitivity.SUSPECTED,
     re: /(卡号|账号|card\s*(number|no))\s*[:：]?\s*\d{16,19}\b/i,
+    label: '银行卡号',
   },
   {
     id: 'private_key_hint',
     level: Sensitivity.SUSPECTED,
     re: /(私钥|密钥|api[\s_-]?key|access[\s_-]?token|secret[\s_-]?key)/i,
+    label: '密钥相关关键词',
   },
 ];
+
+/** 命中规则 id → 用户可读说明；未知 id 原样返回（不静默吞掉新规则） */
+export function sensitivityReasonLabel(reasonId: string): string {
+  for (let i: number = 0; i < HIGH_RULES.length; i++) {
+    if (HIGH_RULES[i].id === reasonId) {
+      return HIGH_RULES[i].label;
+    }
+  }
+  for (let i: number = 0; i < CONTEXT_RULES.length; i++) {
+    if (CONTEXT_RULES[i].id === reasonId) {
+      return CONTEXT_RULES[i].label;
+    }
+  }
+  return reasonId;
+}
 
 export class SensitivityDetector {
   detect(text: string): SensitivityVerdict {

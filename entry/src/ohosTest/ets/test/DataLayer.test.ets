@@ -15,13 +15,16 @@ import {
   BlobCas,
   BlobRepository,
   BlobStatus,
+  CaptureKind,
   ClipEntry,
+  ClipIngestService,
   ClipKind,
   CryptoHasher,
   CryptoRandom,
   DB_SCHEMA_VERSION,
   HilogLogger,
   InboxRepository,
+  InboxService,
   InboxState,
   NoteRepository,
   NoteSource,
@@ -187,6 +190,68 @@ export default function dataLayerTest(): void {
       expect((await f.inbox.getById(note.id))?.state).assertEqual(InboxState.ACCEPTED);
       expect(await f.inbox.purgeExpired(now + 2 * 60 * 1000)).assertEqual(1);
       expect((await f.inbox.getById(note.id)) === undefined).assertTrue();
+
+      // 物理删除单条（S2-2：用户明确删除 / 容量淘汰）
+      await f.inbox.save({
+        id: 'del-1',
+        kind: ClipKind.TEXT,
+        rawText: '待删除',
+        sha256: put.sha256,
+        capturedAtMs: now,
+        expiresAtMs: now + 60 * 1000,
+        sensitivity: Sensitivity.NONE,
+        state: InboxState.PENDING,
+        entry: ClipEntry.MANUAL,
+        truncated: false,
+        originalByteLength: 9,
+      });
+      expect(await f.inbox.deleteById('del-1')).assertTrue();
+      expect(await f.inbox.deleteById('del-1')).assertFalse();
+      expect((await f.inbox.getById('del-1')) === undefined).assertTrue();
+    });
+
+    it('inbox_service_capture_confirm_accept_capacity', 0, async () => {
+      const f = fx();
+      const logger = new HilogLogger();
+      const clock = new SystemClock();
+      const random = new CryptoRandom();
+      const ingest = new ClipIngestService({ clock, hasher: new CryptoHasher(), random, logger });
+      // 小容量便于验证淘汰；与主机用例同一套内核，跑在 RelationalStore 上
+      const svc = new InboxService({
+        ingest,
+        inbox: f.inbox,
+        notes: f.notes,
+        clock,
+        logger,
+        policy: { capacity: 2 },
+      });
+
+      // 敏感内容不落盘 → 确认后落盘
+      const sensitive = await svc.capture({ text: '您的验证码：654321', entry: ClipEntry.MANUAL });
+      expect(sensitive.kind).assertEqual(CaptureKind.PENDING_CONFIRM);
+      expect((await f.inbox.getById(sensitive.item.id)) === undefined).assertTrue();
+      await svc.confirmSave(sensitive.item);
+      expect((await f.inbox.getById(sensitive.item.id))?.state).assertEqual(InboxState.PENDING);
+
+      // 再落两条（容量=2）：最旧的确认条目被淘汰（内容不同即不同摘要，不受幂等窗影响）
+      const t1 = await svc.capture({ text: '普通内容甲', entry: ClipEntry.MANUAL });
+      expect(t1.kind).assertEqual(CaptureKind.PERSISTED);
+      const t2 = await svc.capture({ text: '普通内容乙', entry: ClipEntry.MANUAL });
+      expect(t2.kind).assertEqual(CaptureKind.PERSISTED);
+      expect(t2.evicted).assertEqual(1);
+      expect(await svc.pendingCount()).assertEqual(2);
+
+      // 存为笔记：标题/来源/originHash，条目从收件箱列表消失
+      const note = await svc.acceptAsNote(t2.item.id);
+      expect(note.title.length > 0).assertTrue();
+      expect(note.source).assertEqual(NoteSource.CLIPBOARD);
+      expect(note.originHash).assertEqual(t2.item.sha256);
+      expect((await f.inbox.getById(t2.item.id))?.state).assertEqual(InboxState.ACCEPTED);
+      expect(await svc.pendingCount()).assertEqual(1);
+
+      // 一键清空
+      expect(await svc.clearAll()).assertEqual(2); // 1 PENDING + 1 ACCEPTED
+      expect(await svc.pendingCount()).assertEqual(0);
     });
 
     it('startup_recovery_marks_orphans_and_reports_missing', 0, async () => {
