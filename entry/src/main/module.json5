@@ -33,15 +33,39 @@
           },
           {
             // 分享接收入口（设计 §4.1 场景矩阵第 3 行）
+            // S1-2 探测 §6-1 + 官方 FAQ 口径：sendData 的 uris 必须用 utd（标准化数据类型）
+            // 穷举可接收类型并配 maxFileSupported（默认 0 即不收文件）；MIME 的 type 写法
+            // 在分享面板匹配不到目标应用。sendMultipleData 对应多文件分享。
             "actions": [
-              "ohos.want.action.sendData"
+              "ohos.want.action.sendData",
+              "ohos.want.action.sendMultipleData"
             ],
             "uris": [
               {
-                "type": "text/plain"
+                "utd": "general.text"
               },
               {
-                "type": "image/*"
+                "utd": "general.plain-text"
+              },
+              {
+                "scheme": "file",
+                "utd": "general.png",
+                "maxFileSupported": 4
+              },
+              {
+                "scheme": "file",
+                "utd": "general.jpeg",
+                "maxFileSupported": 4
+              },
+              {
+                "scheme": "file",
+                "utd": "general.webp",
+                "maxFileSupported": 4
+              },
+              {
+                "scheme": "file",
+                "utd": "general.gif",
+                "maxFileSupported": 4
               }
             ]
           }

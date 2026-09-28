@@ -6,17 +6,21 @@ import {
   ClipKind,
   ClipboardItem,
   DEFAULT_INBOX_CAPACITY,
+  DEFAULT_SHARE_POLICY,
   ForegroundCheck,
   ForegroundPromptController,
   INBOX_LIST_LIMIT,
   InboxService,
   Note,
   Sensitivity,
+  ShareIntakeSummary,
+  ShareRejectReason,
   SystemPasteboardProbe,
   sensitivityReasonLabel,
 } from 'common';
 import { EVENT_FOREGROUND } from '../EntryEvents';
 import { AppServices } from '../services/AppServices';
+import { ShareNoticeBus } from '../share/share-intake';
 import { flatPreview, relativeTimeLabel } from '../ui/Format';
 
 // ---------------------------------------------------------------------------
@@ -144,20 +148,29 @@ struct Index {
   private readBusy: boolean = false;
   private fgChecking: boolean = false;
   private fgHandler: (() => void) | undefined = undefined;
+  private readonly shareListener = (summary: ShareIntakeSummary): void => {
+    this.applyShareSummary(summary);
+  };
 
   aboutToAppear(): void {
     this.subscribeForeground();
     this.initData();
     this.checkForeground();
+    // 分享结果接收（S2-3）：订阅即时投递 + drain 冷启动窗口期的积压
+    ShareNoticeBus.subscribe(this.shareListener);
+    this.drainShareNotices();
   }
 
   onPageShow(): void {
     // 从其他页面返回时复查。检测只是"读布尔"，且同一内容集内不重复弹（状态机保证），不会打扰
     this.checkForeground();
+    // 分享拉起已运行实例时本页可能已在显示（不走 aboutToAppear），这里兜底取积压
+    this.drainShareNotices();
     this.refreshInbox();
   }
 
   aboutToDisappear(): void {
+    ShareNoticeBus.unsubscribe(this.shareListener);
     if (this.fgHandler === undefined) {
       return;
     }
@@ -304,6 +317,54 @@ struct Index {
       this.notice = `已保存到收件箱；按容量/保留期策略清理了 ${result.evicted} 条旧内容。`;
     } else {
       this.notice = '已保存到收件箱。';
+    }
+  }
+
+  /** 取出分享结果积压（冷启动/后台到达窗口期），逐条应用 */
+  private drainShareNotices(): void {
+    const backlog: ShareIntakeSummary[] = ShareNoticeBus.drain();
+    for (let i: number = 0; i < backlog.length; i++) {
+      this.applyShareSummary(backlog[i]);
+    }
+  }
+
+  /**
+   * 分享结果的用户提示（S2-3 降级口径，S1-2 探测报告 §9）：
+   * 保存/合并/拒绝各有如实文案；待确认的敏感条目复用落盘前确认面板。
+   */
+  private async applyShareSummary(summary: ShareIntakeSummary): Promise<void> {
+    const parts: string[] = [];
+    if (summary.persisted > 0) {
+      parts.push(`已保存 ${summary.persisted} 条分享内容到收件箱`);
+    }
+    if (summary.merged > 0) {
+      parts.push(`${summary.merged} 条与已保存内容重复，已合并`);
+    }
+    for (let i: number = 0; i < summary.rejections.length; i++) {
+      const r = summary.rejections[i];
+      if (r.reason === ShareRejectReason.UNSUPPORTED_TYPE) {
+        parts.push('有内容因类型不支持未保存（当前仅支持文本与图片）');
+      } else if (r.reason === ShareRejectReason.FILE_TOO_LARGE) {
+        const mb: number = Math.floor(DEFAULT_SHARE_POLICY.maxFileBytes / 1024 / 1024);
+        parts.push(`有文件超过 ${mb}MB 上限未保存`);
+      } else if (r.reason === ShareRejectReason.URI_UNREADABLE) {
+        parts.push('有文件读取失败（分享授权可能已过期），未保存');
+      } else if (r.reason === ShareRejectReason.EMPTY_SHARE) {
+        parts.push('分享内容为空，未保存');
+      }
+    }
+    if (summary.rejectedContent.length > 0) {
+      parts.push('有内容为空或超出长度上限，未保存');
+    }
+    if (parts.length > 0) {
+      this.notice = `${parts.join('；')}。`;
+    }
+    if (summary.pendingConfirm.length > 0) {
+      // 逐条交用户决定（与手动粘贴的敏感提示同一面板）；多条时先展示第一条
+      this.presentConfirm(summary.pendingConfirm[0].item, summary.pendingConfirm[0].reasons);
+    }
+    if (summary.persisted > 0 || summary.evicted > 0) {
+      await this.refreshInbox();
     }
   }
 

@@ -12,6 +12,7 @@ import {
 import { G1ProbeLog } from '../probe/G1ProbeLog';
 import { probeForegroundRead, probeShareUriCopy, probeShareWant, recordDeviceInfo } from '../probe/G1ProbeScenes';
 import { EVENT_FOREGROUND } from '../EntryEvents';
+import { handleSharedWant } from '../share/share-intake';
 
 const DOMAIN: number = 0xF1C0;
 const TAG: string = 'ClipNote';
@@ -37,6 +38,8 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, TAG, 'data runtime init failed: %{public}s', String(err));
       });
     hilog.info(DOMAIN, TAG, '%{public}s', 'ability onCreate');
+    // S2-3 分享接收：非分享 want 在 handleSharedWant 内直接返回；全程不抛、不阻塞启动
+    handleSharedWant(want, 'onCreate');
     // ===== G1 PROBE BEGIN（WHY-90 临时设施，G1 验收后整体移除）=====
     // 只记录不拦截：任何探针异常都不允许影响正常启动路径。
     try {
@@ -53,6 +56,8 @@ export default class EntryAbility extends UIAbility {
   // ===== G1 PROBE BEGIN（WHY-90：分享已启动实例时走 onNewWant，探测后随探针块移除）=====
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     super.onNewWant(want, launchParam);
+    // S2-3 分享接收（已运行实例的分享到达路径）
+    handleSharedWant(want, 'onNewWant');
     try {
       probeShareWant(want, 'onNewWant');
       probeShareUriCopy(want);

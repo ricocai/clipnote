@@ -157,6 +157,8 @@ export class MemoryFileStore implements IFileStore {
   private readonly dirs: Set<string> = new Set<string>();
   /** 注入的写失败次数（模拟磁盘满） */
   public failNextWrite: number = 0;
+  /** 注入的读字节失败次数（模拟分享 URI 授权被撤销/读取中断，S2-3 负向用例） */
+  public failNextReadBytes: number = 0;
   /** 记录所有写操作路径，用于断言原子写入顺序 */
   readonly writeLog: string[] = [];
   readonly renameLog: string[] = [];
@@ -206,6 +208,10 @@ export class MemoryFileStore implements IFileStore {
     return v;
   }
   async readBytes(p: string): Promise<Uint8Array> {
+    if (this.failNextReadBytes > 0) {
+      this.failNextReadBytes--;
+      throw new Error('EACCES: permission denied (injected)');
+    }
     const v = this.byteFiles.get(p);
     if (v === undefined) {
       throw new Error(`ENOENT: ${p}`);

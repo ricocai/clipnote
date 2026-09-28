@@ -9,6 +9,7 @@ import {
   InboxService,
   NoteService,
   SandboxFileStore,
+  ShareIntakeService,
   SystemClock,
 } from 'common';
 
@@ -36,6 +37,7 @@ export class AppServices {
 
   private inboxSvc: InboxService | undefined = undefined;
   private noteSvc: NoteService | undefined = undefined;
+  private shareSvc: ShareIntakeService | undefined = undefined;
 
   private constructor() {
     const root: string = AppContextHolder.filesDir();
@@ -84,5 +86,24 @@ export class AppServices {
       });
     }
     return this.noteSvc;
+  }
+
+  /**
+   * 分享接收服务（S2-3）。图片字节一律进 AppDataRuntime 的 CAS（与启动恢复扫描同一棵
+   * blobs/ 树）；本类的 this.blobs 是 G1 探针期独立根目录实例，分享路径不得使用它
+   * （否则恢复扫描核对不到分享图片，G5 阻断项）。
+   */
+  async shareIntakeService(): Promise<ShareIntakeService> {
+    if (this.shareSvc === undefined) {
+      const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+      this.shareSvc = new ShareIntakeService({
+        inbox: await this.inboxService(),
+        blobs: rt.blobCas,
+        blobRepo: rt.blobs,
+        fs: this.fs,
+        logger: this.logger,
+      });
+    }
+    return this.shareSvc;
   }
 }
