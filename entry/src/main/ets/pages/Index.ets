@@ -1,4 +1,5 @@
 import { pasteboard } from '@kit.BasicServicesKit';
+import { router } from '@kit.ArkUI';
 import {
   BlobCas,
   ClipEntry,
@@ -206,6 +207,16 @@ struct Index {
         .height(160)
         .width('100%')
       }
+
+      // G1 PROBE（WHY-90 临时入口，G1 验收后移除）：真机执行探测场景页
+      Text('G1 探测页（临时）')
+        .fontSize(12)
+        .fontColor('#8C8C8C')
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .onClick(() => {
+          router.pushUrl({ url: 'pages/G1ProbePage' });
+        })
 
       Text(`收件箱（${this.inbox.length}）`)
         .fontSize(16)
