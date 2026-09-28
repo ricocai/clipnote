@@ -9,5 +9,8 @@
     "common": "file:../common",
     "speech": "file:../speech",
     "mcp": "file:../mcp"
+  },
+  "devDependencies": {
+    "@ohos/hypium": "1.0.19"
   }
 }

@@ -21,9 +21,19 @@ export * from './src/main/ets/core/backup';
 export * from './src/main/ets/core/search/tokenizer';
 export * from './src/main/ets/core/search/inverted-index';
 
+export * from './src/main/ets/core/data/rdb';
+export * from './src/main/ets/core/data/schema';
+export * from './src/main/ets/core/data/migrator';
+export * from './src/main/ets/core/data/note-repository';
+export * from './src/main/ets/core/data/inbox-repository';
+export * from './src/main/ets/core/data/blob-repository';
+export * from './src/main/ets/core/data/recovery';
+
 export { SystemClock } from './src/main/ets/adapters/system-clock';
 export { CryptoRandom } from './src/main/ets/adapters/random';
 export { CryptoHasher } from './src/main/ets/adapters/crypto-hasher';
 export { HilogLogger } from './src/main/ets/adapters/hilog-logger';
 export { SandboxFileStore } from './src/main/ets/adapters/file-store';
 export { AppContextHolder } from './src/main/ets/adapters/app-context';
+export { RelationalStoreExecutor, DEFAULT_DB_NAME } from './src/main/ets/adapters/relational-store';
+export { AppDataRuntime } from './src/main/ets/adapters/app-database';

@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_test_desc",
+      "value": "ClipNote 数据层单元测试模块"
+    },
+    {
+      "name": "TestAbility_desc",
+      "value": "ClipNote test ability"
+    },
+    {
+      "name": "TestAbility_label",
+      "value": "ClipNoteTest"
+    }
+  ]
+}
