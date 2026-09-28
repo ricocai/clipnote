@@ -3,6 +3,7 @@
     "pages/Index",
     "pages/NoteList",
     "pages/NoteEdit",
+    "pages/NoteRead",
     "pages/Settings",
     "pages/G1ProbePage"
   ]
