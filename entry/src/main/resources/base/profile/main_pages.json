@@ -2,6 +2,7 @@
   "src": [
     "pages/Index",
     "pages/NoteList",
+    "pages/Search",
     "pages/NoteEdit",
     "pages/NoteRead",
     "pages/HtmlRead",

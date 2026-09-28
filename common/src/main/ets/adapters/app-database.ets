@@ -5,6 +5,7 @@ import { BackupService } from '../core/backup-service';
 import { IRdbExecutor } from '../core/data/rdb';
 import { SchemaMigrator } from '../core/data/migrator';
 import { NoteRepository } from '../core/data/note-repository';
+import { SearchRepository } from '../core/data/search-repository';
 import { InboxRepository } from '../core/data/inbox-repository';
 import { BlobRepository } from '../core/data/blob-repository';
 import { StartupRecoveryReport, runStartupRecovery } from '../core/data/recovery';
@@ -27,6 +28,7 @@ export class AppDataRuntime {
 
   readonly executor: IRdbExecutor;
   readonly notes: NoteRepository;
+  readonly search: SearchRepository;
   readonly inbox: InboxRepository;
   readonly blobs: BlobRepository;
   readonly blobCas: BlobCas;
@@ -37,6 +39,7 @@ export class AppDataRuntime {
   private constructor(
     executor: IRdbExecutor,
     notes: NoteRepository,
+    search: SearchRepository,
     inbox: InboxRepository,
     blobs: BlobRepository,
     blobCas: BlobCas,
@@ -48,6 +51,7 @@ export class AppDataRuntime {
   ) {
     this.executor = executor;
     this.notes = notes;
+    this.search = search;
     this.inbox = inbox;
     this.blobs = blobs;
     this.blobCas = blobCas;
@@ -115,11 +119,12 @@ export class AppDataRuntime {
     await new SchemaMigrator(executor, logger).migrate();
 
     const notes: NoteRepository = new NoteRepository({ db: executor, clock, random, logger });
+    const search: SearchRepository = new SearchRepository({ db: executor });
     const inbox: InboxRepository = new InboxRepository({ db: executor, logger });
     const blobs: BlobRepository = new BlobRepository({ db: executor, logger });
     const blobCas: BlobCas = new BlobCas(context.filesDir, new SandboxFileStore(), hasher, logger, random);
 
-    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, inbox, blobs, blobCas, context.filesDir, clock, random, hasher, logger);
+    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, search, inbox, blobs, blobCas, context.filesDir, clock, random, hasher, logger);
     runtime.recoveryReport = await runStartupRecovery({ blobRepository: blobs, blobCas, logger });
     // 收件箱保留期清理（S2-2，设计 §4.1）：启动即清，不依赖用户是否打开收件箱页
     const purged: number = await inbox.purgeExpired(clock.nowMs());

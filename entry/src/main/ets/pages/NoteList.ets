@@ -193,6 +193,12 @@ struct NoteList {
           .fontWeight(FontWeight.Bold)
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
+        Text('搜索')
+          .fontSize(15)
+          .fontColor('#1F6FEB')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/Search' });
+          })
         Text('新建')
           .fontSize(15)
           .fontColor('#1F6FEB')

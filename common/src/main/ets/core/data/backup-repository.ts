@@ -11,8 +11,8 @@
  *  - 收件箱（clipboard_item）不在备份范围（设计 §4.1：默认不进备份导出），replaceAll 不动它；
  *  - replaceAll 必须由调用方包裹在**单个事务**里（BackupService 负责），
  *    整库替换的原子性 = 这一个事务；
- *  - note_fts 是占位普通表（G7 未落 FTS5），replaceAll 从恢复的笔记直接重建，
- *    保证搜索索引与笔记域一致。
+ *  - note_fts 是 FTS5 trigram contentless 表（V2 迁移，schema.ts）：replaceAll 先逐表清空，
+ *    再从恢复的笔记域整批重建索引（DELETE + INSERT ... SELECT），触发器保证后续增量一致。
  */
 
 import { BackupManifest } from '../backup';
@@ -132,13 +132,11 @@ export class BackupRepository {
         n.deletedAtMs === undefined ? null : n.deletedAtMs,
       ];
       await this.db.execute(`INSERT INTO note (${NOTE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, params);
-      // 占位搜索表与笔记域同步重建（schema.ts：G7 确认 FTS5 后由迁移替换）
-      await this.db.execute(`INSERT INTO note_fts (note_id, title, content) VALUES (?, ?, ?)`, [
-        n.id,
-        n.title,
-        n.contentMd,
-      ]);
     }
+    // 搜索索引与笔记域同步重建（note_fts 为 FTS5 contentless 表，rowid 对齐 note 隐含 rowid；
+    // 触发器只管单条增删改，整库替换走批量 DELETE + INSERT ... SELECT，schema.ts V2 口径）
+    await this.db.execute(`DELETE FROM note_fts`);
+    await this.db.execute(`INSERT INTO note_fts (rowid, title, content_md) SELECT rowid, title, content_md FROM note`);
     for (let i: number = 0; i < manifest.blobs.length; i++) {
       const b: BlobRecord = manifest.blobs[i];
       await this.db.execute(

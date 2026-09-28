@@ -42,3 +42,5 @@ local.properties
 *.log
 # G5 恢复演练运行产物
 /tools/.g5-tmp/
+# G7 探测/回归运行产物
+/tools/.g7-tmp/

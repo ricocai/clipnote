@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 
 import { SchemaMigrator } from '../../common/src/main/ets/core/data/migrator';
 import { NoteRepository } from '../../common/src/main/ets/core/data/note-repository';
+import { SearchRepository } from '../../common/src/main/ets/core/data/search-repository';
 import { BlobRepository } from '../../common/src/main/ets/core/data/blob-repository';
 import { NoteService } from '../../common/src/main/ets/core/notes';
 import { MAX_IMAGE_ATTACHMENTS_PER_NOTE } from '../../common/src/main/ets/core/notes';
@@ -47,9 +48,10 @@ async function makeFixture(): Promise<Fixture> {
   const fs = new MemoryFileStore();
   const hasher = new NodeHasher();
   const notes = new NoteRepository({ db, clock, random: rand, logger });
+  const search = new SearchRepository({ db });
   const blobs = new BlobRepository({ db, logger });
   const blobCas = new BlobCas('/sandbox', fs, hasher, logger, rand);
-  const svc = new NoteService({ db, notes, blobs, blobCas, hasher, logger });
+  const svc = new NoteService({ db, notes, search, blobs, blobCas, hasher, logger });
   return { db, clock, fs, notes, blobs, svc, logger };
 }
 

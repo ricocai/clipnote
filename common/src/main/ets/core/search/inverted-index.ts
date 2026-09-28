@@ -258,41 +258,53 @@ export class InvertedIndex {
    * 原文高亮映射：给出**原文偏移**，而不是插入标记的字符串。
    * 这样渲染层（ArkUI 或 ArkWeb）可自行决定高亮样式，既避免 XSS，也保证
    * 「屏幕显示 / 朗读 / 导出」三处使用同一份区间（设计 §4.3）。
+   *
+   * 独立导出：落库版检索（data/search-repository.ts）在拿到 SQL 候选后，
+   * 用同一函数从原文构建 Snippet，保证两版高亮契约逐字节一致。
    */
   private buildSnippet(entry: DocEntry, matched: ReadonlySet<string>, radius: number): Snippet {
-    const ranges: HighlightRange[] = [];
-    let firstStart: number = -1;
-    for (let i: number = 0; i < entry.spans.length; i++) {
-      const span: TokenSpan = entry.spans[i];
-      if (!matched.has(span.term)) {
-        continue;
-      }
-      if (firstStart < 0 || span.start < firstStart) {
-        firstStart = span.start;
-      }
-      ranges.push({ start: span.start, end: span.end });
-    }
-    if (firstStart < 0) {
-      const head: string = entry.text.slice(0, radius * 2);
-      return { text: head, offset: 0, highlights: [] };
-    }
-    const merged: HighlightRange[] = mergeRanges(ranges);
-    const from: number = Math.max(0, firstStart - radius);
-    const to: number = Math.min(entry.text.length, firstStart + radius * 3);
-    const text: string = entry.text.slice(from, to);
-    const highlights: HighlightRange[] = [];
-    for (let i: number = 0; i < merged.length; i++) {
-      const r: HighlightRange = merged[i];
-      if (r.end <= from || r.start >= to) {
-        continue;
-      }
-      highlights.push({
-        start: Math.max(0, r.start - from),
-        end: Math.min(text.length, r.end - from),
-      });
-    }
-    return { text, offset: from, highlights };
+    return buildSnippet(entry.text, matched, radius);
   }
+}
+
+/**
+ * 从原文构建高亮片段（`matched` 为命中的词元集合，通常取查询词元；
+ * 词元未在原文分词中出现时自然不产出高亮区间，与倒排版行为一致）。
+ */
+export function buildSnippet(text: string, matched: ReadonlySet<string>, radius: number): Snippet {
+  const spans: TokenSpan[] = tokenize(text);
+  const ranges: HighlightRange[] = [];
+  let firstStart: number = -1;
+  for (let i: number = 0; i < spans.length; i++) {
+    const span: TokenSpan = spans[i];
+    if (!matched.has(span.term)) {
+      continue;
+    }
+    if (firstStart < 0 || span.start < firstStart) {
+      firstStart = span.start;
+    }
+    ranges.push({ start: span.start, end: span.end });
+  }
+  if (firstStart < 0) {
+    const head: string = text.slice(0, radius * 2);
+    return { text: head, offset: 0, highlights: [] };
+  }
+  const merged: HighlightRange[] = mergeRanges(ranges);
+  const from: number = Math.max(0, firstStart - radius);
+  const to: number = Math.min(text.length, firstStart + radius * 3);
+  const snippetText: string = text.slice(from, to);
+  const highlights: HighlightRange[] = [];
+  for (let i: number = 0; i < merged.length; i++) {
+    const r: HighlightRange = merged[i];
+    if (r.end <= from || r.start >= to) {
+      continue;
+    }
+    highlights.push({
+      start: Math.max(0, r.start - from),
+      end: Math.min(snippetText.length, r.end - from),
+    });
+  }
+  return { text: snippetText, offset: from, highlights };
 }
 
 /** 合并重叠或相邻区间（2-gram 天然重叠，必须合并后才适合渲染高亮） */

@@ -79,6 +79,7 @@ export class AppServices {
       this.noteSvc = new NoteService({
         db: rt.executor,
         notes: rt.notes,
+        search: rt.search,
         blobs: rt.blobs,
         blobCas: rt.blobCas,
         hasher: this.hasher,

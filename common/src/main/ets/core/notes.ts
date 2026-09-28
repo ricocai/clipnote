@@ -17,6 +17,7 @@ import { IHasher, ILogger, LogLevel } from './ports';
 import { BlobCas } from './blob-cas';
 import { IRdbExecutor, transact } from './data/rdb';
 import { NoteRepository } from './data/note-repository';
+import { SearchRepository, NoteSearchHit, NoteSearchOptions } from './data/search-repository';
 import { BlobRepository } from './data/blob-repository';
 import { deriveTitle } from './inbox';
 import { ATTACHMENT_SCHEME } from './markdown';
@@ -30,6 +31,7 @@ export const MAX_IMAGE_ATTACHMENTS_PER_NOTE: number = 50;
 export interface NoteServiceDeps {
   readonly db: IRdbExecutor;
   readonly notes: NoteRepository;
+  readonly search: SearchRepository;
   readonly blobs: BlobRepository;
   readonly blobCas: BlobCas;
   readonly hasher: IHasher;
@@ -126,6 +128,34 @@ export class NoteService {
 
   async listTagsOfNote(noteId: NoteId): Promise<Tag[]> {
     return this.deps.notes.listTagsOfNote(noteId);
+  }
+
+  /** 全部标签（搜索页筛选栏 / 标签管理） */
+  async listAllTags(): Promise<Tag[]> {
+    return this.deps.notes.listAllTags();
+  }
+
+  /** 标签重命名（搜索页标签管理入口） */
+  async renameTag(tagId: string, newName: string): Promise<Tag> {
+    return this.deps.notes.renameTag(tagId, newName);
+  }
+
+  /** 按标签筛选笔记（搜索页标签筛选；与列表同排序口径） */
+  async listByTag(tagId: string, limit: number, offset?: number): Promise<Note[]> {
+    return this.deps.notes.listByTag(tagId, limit, offset);
+  }
+
+  /** 收藏（置顶）筛选 */
+  async listFavorites(limit: number, offset?: number): Promise<Note[]> {
+    return this.deps.notes.listFavorites(limit, offset);
+  }
+
+  /**
+   * 中文全文检索（S3-4 / G7）：FTS5 trigram 主路径 + 短查询 LIKE 兜底，
+   * 排除回收站，可选标签 / 收藏筛选。语义与排序口径见 SearchRepository。
+   */
+  async searchNotes(query: string, options?: NoteSearchOptions): Promise<NoteSearchHit[]> {
+    return this.deps.search.search(query, options);
   }
 
   async getById(id: NoteId): Promise<Note | undefined> {

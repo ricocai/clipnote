@@ -1,0 +1,563 @@
+{
+  "generatedAt": "2026-09-28T17:18:51.540Z",
+  "environment": {
+    "node": "v22.22.2",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "strategy": "schema V2 (FTS5 trigram contentless + 触发器) + SearchRepository（≥3 字符 trigram 短语，1–2 字符 LIKE 受限扫描）",
+  "corpora": [
+    {
+      "size": 1000,
+      "queryCases": 16,
+      "runsPerQuery": 12,
+      "buildMs": 38.759,
+      "dbBytes": 1798144,
+      "meanMs": 15.372,
+      "p50Ms": 14.282,
+      "p95Ms": 30.94,
+      "recall": 1,
+      "precision": 1,
+      "perQuery": [
+        {
+          "label": "单字（CJK 1 码点）",
+          "query": "笔",
+          "truthCount": 324,
+          "hitCount": 324,
+          "intersection": 324,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 3.074,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "双字",
+          "query": "笔记",
+          "truthCount": 324,
+          "hitCount": 324,
+          "intersection": 324,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 2.745,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "三字",
+          "query": "剪贴板",
+          "truthCount": 329,
+          "hitCount": 329,
+          "intersection": 329,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 10.396,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "四字短语",
+          "query": "鸿蒙笔记",
+          "truthCount": 3,
+          "hitCount": 3,
+          "intersection": 3,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 14.229,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "中英混合",
+          "query": "arkts 性能",
+          "truthCount": 0,
+          "hitCount": 0,
+          "intersection": 0,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 26.524,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "纯英文",
+          "query": "sqlite",
+          "truthCount": 274,
+          "hitCount": 274,
+          "intersection": 274,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 31.591,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "纯数字",
+          "query": "2026",
+          "truthCount": 196,
+          "hitCount": 196,
+          "intersection": 196,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 16.471,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "emoji",
+          "query": "🙂",
+          "truthCount": 244,
+          "hitCount": 244,
+          "intersection": 244,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 2.033,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "含标点",
+          "query": "，财报",
+          "truthCount": 66,
+          "hitCount": 66,
+          "intersection": 66,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 7.658,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "不存在的词（负例）",
+          "query": "量子纠缠退火",
+          "truthCount": 0,
+          "hitCount": 0,
+          "intersection": 0,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 6.815,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 1",
+          "query": "证据应用财报",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 27.796,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 2",
+          "query": "arkts",
+          "truthCount": 256,
+          "hitCount": 256,
+          "intersection": 256,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 24.552,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 3",
+          "query": "藏，芯",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 7.309,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 4",
+          "query": "待办降级事务",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 29.612,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 5",
+          "query": "京内存，",
+          "truthCount": 2,
+          "hitCount": 2,
+          "intersection": 2,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 14.335,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 6",
+          "query": "利证据产能",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 20.81,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        }
+      ],
+      "syncChecks": [
+        {
+          "name": "新增可检索",
+          "ok": true
+        },
+        {
+          "name": "更新后旧词失效",
+          "ok": true
+        },
+        {
+          "name": "更新后新词命中",
+          "ok": true
+        },
+        {
+          "name": "软删除后无泄露",
+          "ok": true
+        },
+        {
+          "name": "恢复后重新命中",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "size": 10000,
+      "queryCases": 16,
+      "runsPerQuery": 12,
+      "buildMs": 435.734,
+      "dbBytes": 13967360,
+      "meanMs": 140.231,
+      "p50Ms": 80.82,
+      "p95Ms": 504.683,
+      "recall": 1,
+      "precision": 1,
+      "perQuery": [
+        {
+          "label": "单字（CJK 1 码点）",
+          "query": "笔",
+          "truthCount": 3485,
+          "hitCount": 3485,
+          "intersection": 3485,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 24.982,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "双字",
+          "query": "笔记",
+          "truthCount": 3485,
+          "hitCount": 3485,
+          "intersection": 3485,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 27.034,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "三字",
+          "query": "剪贴板",
+          "truthCount": 3480,
+          "hitCount": 3480,
+          "intersection": 3480,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 169.009,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "四字短语",
+          "query": "鸿蒙笔记",
+          "truthCount": 32,
+          "hitCount": 32,
+          "intersection": 32,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 72.766,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "中英混合",
+          "query": "arkts 性能",
+          "truthCount": 0,
+          "hitCount": 0,
+          "intersection": 0,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 145.071,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "纯英文",
+          "query": "sqlite",
+          "truthCount": 2734,
+          "hitCount": 2734,
+          "intersection": 2734,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 506.797,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "纯数字",
+          "query": "2026",
+          "truthCount": 1820,
+          "hitCount": 1820,
+          "intersection": 1820,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 308.717,
+          "baseline": {
+            "recall": 0.999,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "emoji",
+          "query": "🙂",
+          "truthCount": 2378,
+          "hitCount": 2378,
+          "intersection": 2378,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 19.167,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "含标点",
+          "query": "，财报",
+          "truthCount": 639,
+          "hitCount": 639,
+          "intersection": 639,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 58.44,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "不存在的词（负例）",
+          "query": "量子纠缠退火",
+          "truthCount": 0,
+          "hitCount": 0,
+          "intersection": 0,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 35.437,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 1",
+          "query": "办api音色",
+          "truthCount": 4,
+          "hitCount": 4,
+          "intersection": 4,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 277.502,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 2",
+          "query": "毛利检索验",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 124.04,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 3",
+          "query": "25，",
+          "truthCount": 273,
+          "hitCount": 273,
+          "intersection": 273,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 49.941,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 4",
+          "query": "024订单队",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 225.1,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 5",
+          "query": "应用财报",
+          "truthCount": 33,
+          "hitCount": 33,
+          "intersection": 33,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 79.35,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "label": "语料抽样片段 6",
+          "query": "深圳解析芯",
+          "truthCount": 1,
+          "hitCount": 1,
+          "intersection": 1,
+          "recall": 1,
+          "precision": 1,
+          "avgMs": 120.341,
+          "baseline": {
+            "recall": 1,
+            "precision": 1
+          },
+          "verdict": "PASS"
+        }
+      ],
+      "syncChecks": [
+        {
+          "name": "新增可检索",
+          "ok": true
+        },
+        {
+          "name": "更新后旧词失效",
+          "ok": true
+        },
+        {
+          "name": "更新后新词命中",
+          "ok": true
+        },
+        {
+          "name": "软删除后无泄露",
+          "ok": true
+        },
+        {
+          "name": "恢复后重新命中",
+          "ok": true
+        }
+      ]
+    }
+  ]
+}

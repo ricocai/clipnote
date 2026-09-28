@@ -32,6 +32,7 @@ export * from './src/main/ets/core/data/rdb';
 export * from './src/main/ets/core/data/schema';
 export * from './src/main/ets/core/data/migrator';
 export * from './src/main/ets/core/data/note-repository';
+export * from './src/main/ets/core/data/search-repository';
 export * from './src/main/ets/core/data/inbox-repository';
 export * from './src/main/ets/core/data/blob-repository';
 export * from './src/main/ets/core/data/backup-repository';

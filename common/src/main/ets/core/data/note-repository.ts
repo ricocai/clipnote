@@ -249,6 +249,43 @@ export class NoteRepository {
     return tags;
   }
 
+  /** 按标签筛选笔记（搜索页标签筛选；同列表排序口径：置顶优先、更新时间倒序） */
+  async listByTag(tagId: string, limit: number, offset?: number): Promise<Note[]> {
+    return this.queryNotes(
+      `SELECT ${NOTE_COLUMNS} FROM note
+       WHERE deleted_at IS NULL AND id IN (SELECT note_id FROM note_tag WHERE tag_id = ?)
+       ORDER BY pinned DESC, updated_at DESC LIMIT ? OFFSET ?`,
+      [tagId, limit, offset === undefined ? 0 : offset],
+    );
+  }
+
+  /** 收藏（置顶）筛选：同列表排序口径 */
+  async listFavorites(limit: number, offset?: number): Promise<Note[]> {
+    return this.queryNotes(
+      `SELECT ${NOTE_COLUMNS} FROM note
+       WHERE deleted_at IS NULL AND pinned = 1
+       ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+      [limit, offset === undefined ? 0 : offset],
+    );
+  }
+
+  /**
+   * 标签重命名（搜索页标签管理）。trim 后为空抛错；
+   * 与既有标签重名由 name UNIQUE 约束兜底（抛错由调用方提示），不产生静默合并。
+   */
+  async renameTag(tagId: string, newName: string): Promise<Tag> {
+    const trimmed: string = newName.trim();
+    if (trimmed.length === 0) {
+      throw new Error('NoteRepository.renameTag: empty tag name');
+    }
+    await this.deps.db.execute(`UPDATE tag SET name = ? WHERE id = ?`, [trimmed, tagId]);
+    const rows: SqlRow[] = await this.deps.db.query(`SELECT id, name FROM tag WHERE id = ?`, [tagId]);
+    if (rows.length === 0) {
+      throw new Error(`NoteRepository.renameTag: tag ${tagId} not found`);
+    }
+    return { id: reqString(rows[0], 'id'), name: reqString(rows[0], 'name') };
+  }
+
   // ---------------------------------------------------------------------------
 
   private async queryNotes(sql: string, params: (string | number | null)[]): Promise<Note[]> {
