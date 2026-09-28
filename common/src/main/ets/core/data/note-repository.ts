@@ -128,6 +128,17 @@ export class NoteRepository {
     return this.requireLive(id);
   }
 
+  /** 编辑页一次性保存（标题 + 正文）：一次保存 = 一次同步语义修改，revision 只 + 1（设计 §4.8） */
+  async update(id: NoteId, title: string, contentMd: string): Promise<Note> {
+    const existing: Note = await this.requireLive(id);
+    const now: number = this.deps.clock.nowMs();
+    await this.deps.db.execute(
+      `UPDATE note SET title = ?, content_md = ?, revision = ?, updated_at = ? WHERE id = ?`,
+      [title, contentMd, existing.revision + 1, now, id],
+    );
+    return this.requireLive(id);
+  }
+
   async setPinned(id: NoteId, pinned: boolean): Promise<Note> {
     const existing: Note = await this.requireLive(id);
     const now: number = this.deps.clock.nowMs();
@@ -163,10 +174,10 @@ export class NoteRepository {
     return this.requireLive(id);
   }
 
-  /** 列表页主路径：未删除，按更新时间倒序，分页由 LIMIT/OFFSET 约束 */
+  /** 列表页主路径：未删除；置顶优先，其余按更新时间倒序；分页由 LIMIT/OFFSET 约束 */
   async listRecent(limit: number, offset?: number): Promise<Note[]> {
     return this.queryNotes(
-      `SELECT ${NOTE_COLUMNS} FROM note WHERE deleted_at IS NULL ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
+      `SELECT ${NOTE_COLUMNS} FROM note WHERE deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC LIMIT ? OFFSET ?`,
       [limit, offset === undefined ? 0 : offset],
     );
   }

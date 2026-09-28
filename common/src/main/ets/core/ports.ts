@@ -12,9 +12,11 @@ export interface IClock {
   nowMs(): number;
 }
 
-/** 摘要：实现必须返回小写 64 位十六进制 SHA-256 */
+/** 摘要：实现必须返回小写 64 位十六进制 SHA-256（文本与字节两个入口语义一致） */
 export interface IHasher {
   sha256Hex(data: string): Promise<string>;
+  /** 对原始字节取摘要：图片等二进制附件的内容寻址入口（设计 §4.2） */
+  sha256HexBytes(data: Uint8Array): Promise<string>;
 }
 
 /** 随机源：UUID v7 与临时文件名使用 */
@@ -59,7 +61,11 @@ export interface IFileStore {
   stat(path: string): Promise<FileStat | undefined>;
   /** 覆盖写；不保证崩溃一致性 */
   writeRaw(path: string, data: string): Promise<void>;
+  /** 二进制覆盖写；与 writeRaw 同为原语，原子性由 atomicfs.ts 的协议保证 */
+  writeRawBytes(path: string, data: Uint8Array): Promise<void>;
   readText(path: string): Promise<string>;
+  /** 读取原始字节（图片附件回读校验用） */
+  readBytes(path: string): Promise<Uint8Array>;
   rename(fromPath: string, toPath: string): Promise<void>;
   /** 刷新文件（或目录）元数据到存储介质 */
   sync(path: string): Promise<void>;
