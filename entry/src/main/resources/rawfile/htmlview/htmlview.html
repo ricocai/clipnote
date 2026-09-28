@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <!--
+    ClipNote 受控 HTML 展示域（可信页面；S3-3；设计 §4.4 信任域分离 / G6 渲染隔离）。
+
+    信任模型（三道防线，互不依赖）：
+     1. 清洗（第一道，ArkTS 侧 common/core/htmlsafe.ts）：不可信 HTML 先被
+        静态化 —— 无脚本、无事件属性、无 iframe/表单/重定向、URL 协议白名单
+        （仅 attachment:// 与 data:image/*）—— 之后才经 __clipnoteSetHtml 进 DOM；
+     2. 平台开关（第二道，pages/HtmlRead.ets 的 Web 组件）：
+        javaScriptAccess(false) 硬断脚本、onlineImageAccess(false)/fileAccess(false)
+        断一切外链与文件通道；
+     3. CSP（第三道，本 meta）：script-src 'self'（无 inline、无 eval）、
+        img-src 只允许 attachment: 与 data:、default-src 'none' 切断
+        connect/media/font/object/base-uri/form-action 其余一切。
+
+    attachment:// 请求全部由 ArkTS 侧 onInterceptRequest 拦截，只按
+    「本篇笔记已授权的附件摘要」映射沙箱 blob（见 pages/HtmlRead.ets）；
+    网页不可能传入任意沙箱路径（引用只来自清洗后的 attachment://<sha256>）。
+
+    若真机实测发现 ArkWeb 的 runJavaScript 注入受 CSP script-src 限制，
+    以 SDK 实际行为为准修正（文件头纪律声明同 entry 其余 ArkWeb 调用）。
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; img-src attachment: data:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HTML 展示</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0; padding: 16px 18px 48px;
+      font-family: system-ui, -apple-system, "PingFang SC", "HarmonyOS Sans", sans-serif;
+      font-size: 16px; line-height: 1.75; color: #262626;
+      background: #FFFFFF; word-wrap: break-word;
+    }
+    h1, h2, h3, h4, h5, h6 { line-height: 1.4; margin: 1.1em 0 0.5em; }
+    h1 { font-size: 1.5em; } h2 { font-size: 1.3em; } h3 { font-size: 1.15em; }
+    p { margin: 0.6em 0; }
+    ul, ol { margin: 0.4em 0; padding-left: 1.4em; }
+    blockquote {
+      margin: 0.6em 0; padding: 2px 12px;
+      border-left: 3px solid #D9D9D9; color: #595959;
+    }
+    pre {
+      margin: 0.6em 0; padding: 10px 12px; overflow-x: auto;
+      background: #F7F7F7; border-radius: 6px;
+      font-size: 0.86em; line-height: 1.55;
+    }
+    code, kbd, samp { background: #F7F7F7; border-radius: 4px; padding: 0 4px; font-size: 0.92em; }
+    pre code { background: none; padding: 0; }
+    hr { border: none; border-top: 1px solid #E8E8E8; margin: 1.2em 0; }
+    figure { margin: 0.8em 0; }
+    figure img { max-width: 100%; border-radius: 6px; display: block; }
+    figcaption { font-size: 0.82em; color: #8C8C8C; margin-top: 4px; }
+    img { max-width: 100%; }
+    table { border-collapse: collapse; margin: 0.8em 0; width: 100%; }
+    td, th { border: 1px solid #E8E8E8; padding: 6px 8px; text-align: left; }
+    th { background: #F7F7F7; }
+    a { color: #1F6FEB; text-decoration: none; pointer-events: none; }
+    /* 长文滚动性能：屏外块跳过渲染，占位高度避免滚动条抖动 */
+    #content > * { content-visibility: auto; contain-intrinsic-size: auto 160px; }
+  </style>
+</head>
+<body>
+  <article id="content"></article>
+  <script src="htmlview.js"></script>
+</body>
+</html>

@@ -1,6 +1,12 @@
 {
   "src": [
     "pages/Index",
+    "pages/NoteList",
+    "pages/Search",
+    "pages/NoteEdit",
+    "pages/NoteRead",
+    "pages/HtmlRead",
+    "pages/Settings",
     "pages/G1ProbePage"
   ]
 }

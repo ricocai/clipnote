@@ -1,0 +1,42 @@
+{
+  "generatedAt": "2026-09-28T15:44:31.944Z",
+  "host": {
+    "node": "v22.22.2",
+    "platform": "darwin/arm64",
+    "markdownIt": "14.x"
+  },
+  "corpus": {
+    "targetChars": 50000,
+    "actualChars": 62905,
+    "utf8Bytes": 161499
+  },
+  "output": {
+    "blocks": 688,
+    "htmlChars": 70303,
+    "htmlUtf8Bytes": 168897
+  },
+  "timings": [
+    {
+      "label": "markdown-it parse + 桥接序列化（reader.tokenize）",
+      "runs": 10,
+      "meanMs": 2.772,
+      "minMs": 2.057,
+      "maxMs": 3.978
+    },
+    {
+      "label": "mdTokensFromJson + parseDocument（ArkTS 块模型）",
+      "runs": 10,
+      "meanMs": 3.568,
+      "minMs": 3.055,
+      "maxMs": 4.2
+    },
+    {
+      "label": "buildReaderHtml（渲染 HTML 构建）",
+      "runs": 10,
+      "meanMs": 3.47,
+      "minMs": 3.152,
+      "maxMs": 4.035
+    }
+  ],
+  "boundary": "本探测是主机基线：ArkWeb 与 Node 同为 V8 系内核，三段 CPU 耗时量级可参考；但首屏含 Web 内核排版/绘制、滚动流畅度含合成器帧率，只能真机实测。reader.html 已内建 window.__clipnotePerf（bridge.js 记录 renderMs/blocks/htmlBytes），真机打开 ≥5 万字笔记后读取该值即可；滚动帧率建议用 DevEco Profiler 观察。"
+}
