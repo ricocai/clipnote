@@ -1,0 +1,39 @@
+# HarmonyOS / DevEco Studio
+/.DS_Store
+**/.DS_Store
+/oh_modules/
+**/oh_modules/
+/.preview/
+**/.preview/
+/.idea/
+**/.idea/
+/.hvigor/
+**/.hvigor/
+/build/
+**/build/
+**/Debug/
+**/Release/
+*.har
+*.hap
+*.app
+*.abc
+*.so
+*.dylib
+*.dll
+sign/
+**/signing/
+local.properties
+*.local
+# tools 本机验证基线产物与依赖
+/tools/node_modules/
+/tools/dist/
+# 本机工具记忆，不入库
+/.workbuddy/
+# 设计文档导出产物：由 md 脚本生成，禁止手改入库（评审决议 §9）
+/design/技术方案设计.html
+# 临时与压缩包
+*.zip
+*.tar
+*.tar.bz2
+*.7z
+*.log

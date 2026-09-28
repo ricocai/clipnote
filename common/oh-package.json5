@@ -1,0 +1,9 @@
+{
+  "name": "common",
+  "version": "0.1.0",
+  "description": "ClipNote 领域内核（core/，平台无关，可被本机 tsc+node 验证）与鸿蒙平台适配（adapters/）。",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

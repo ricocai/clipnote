@@ -1,0 +1,13 @@
+{
+  "name": "entry",
+  "version": "0.1.0",
+  "description": "拾记 ClipNote 主 HAP：UI 与系统能力接入。领域逻辑一律放在 common（HAR）内，本模块不含业务规则。",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "common": "file:../common",
+    "speech": "file:../speech",
+    "mcp": "file:../mcp"
+  }
+}

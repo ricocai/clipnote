@@ -1,0 +1,11 @@
+{
+  "name": "speech",
+  "version": "0.1.0",
+  "description": "离线朗读（TTS）。本期仅定义引擎接口与渐进路线，实现在 G4 门槛通过后填充（设计 §4.6）。",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "common": "file:../common"
+  }
+}

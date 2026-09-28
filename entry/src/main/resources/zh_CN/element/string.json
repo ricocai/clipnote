@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "拾记 ClipNote 主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "拾记 ClipNote"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "拾记"
+    }
+  ]
+}

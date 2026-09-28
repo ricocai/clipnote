@@ -1,0 +1,11 @@
+{
+  "module": {
+    "name": "speech",
+    "type": "har",
+    "deviceTypes": [
+      "phone",
+      "tablet",
+      "2in1"
+    ]
+  }
+}

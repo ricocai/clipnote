@@ -1,0 +1,11 @@
+{
+  "name": "mcp",
+  "version": "0.1.0",
+  "description": "MCP 接入（协议适配 + 传输适配）。本期仅冻结工具级授权语义与协议版本占位，实现在 G3 门槛通过后填充（设计 §4.5）。",
+  "main": "Index.ets",
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "common": "file:../common"
+  }
+}
