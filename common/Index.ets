@@ -19,6 +19,8 @@ export * from './src/main/ets/core/inbox';
 export * from './src/main/ets/core/markdown';
 export * from './src/main/ets/core/speech';
 export * from './src/main/ets/core/backup';
+export * from './src/main/ets/core/zip';
+export * from './src/main/ets/core/backup-service';
 export * from './src/main/ets/core/search/tokenizer';
 export * from './src/main/ets/core/search/inverted-index';
 
@@ -28,6 +30,7 @@ export * from './src/main/ets/core/data/migrator';
 export * from './src/main/ets/core/data/note-repository';
 export * from './src/main/ets/core/data/inbox-repository';
 export * from './src/main/ets/core/data/blob-repository';
+export * from './src/main/ets/core/data/backup-repository';
 export * from './src/main/ets/core/data/recovery';
 
 export { SystemClock } from './src/main/ets/adapters/system-clock';

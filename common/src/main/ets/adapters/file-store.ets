@@ -46,6 +46,36 @@ export class SandboxFileStore implements IFileStore {
     return fs.readTextSync(path);
   }
 
+  async writeBytes(path: string, data: Uint8Array): Promise<void> {
+    const file: fs.File = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+    try {
+      // 拷贝出紧邻的 ArrayBuffer，避免 Uint8Array 视图偏移导致写错区间
+      const buf: ArrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+      fs.writeSync(file.fd, buf);
+    } finally {
+      fs.closeSync(file);
+    }
+  }
+
+  async readBytes(path: string): Promise<Uint8Array> {
+    const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
+    try {
+      const st: fs.Stat = fs.statSync(path);
+      const buf: ArrayBuffer = new ArrayBuffer(st.size);
+      let read: number = 0;
+      while (read < st.size) {
+        const n: number = fs.readSync(file.fd, buf, { offset: read, length: st.size - read });
+        if (n <= 0) {
+          break;
+        }
+        read += n;
+      }
+      return new Uint8Array(buf, 0, read);
+    } finally {
+      fs.closeSync(file);
+    }
+  }
+
   async rename(fromPath: string, toPath: string): Promise<void> {
     fs.renameSync(fromPath, toPath);
   }

@@ -60,6 +60,9 @@ export interface IFileStore {
   /** 覆盖写；不保证崩溃一致性 */
   writeRaw(path: string, data: string): Promise<void>;
   readText(path: string): Promise<string>;
+  /** 二进制覆盖写（备份 ZIP 等）；崩溃一致性同样由 atomicfs 协议在上层保证 */
+  writeBytes(path: string, data: Uint8Array): Promise<void>;
+  readBytes(path: string): Promise<Uint8Array>;
   rename(fromPath: string, toPath: string): Promise<void>;
   /** 刷新文件（或目录）元数据到存储介质 */
   sync(path: string): Promise<void>;

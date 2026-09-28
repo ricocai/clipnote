@@ -112,6 +112,13 @@ export class NodeFileStore implements IFileStore {
   async readText(p: string): Promise<string> {
     return fs.readFileSync(p, 'utf8');
   }
+  async writeBytes(p: string, data: Uint8Array): Promise<void> {
+    fs.writeFileSync(p, Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+  }
+  async readBytes(p: string): Promise<Uint8Array> {
+    const buf: Buffer = fs.readFileSync(p);
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
   async rename(fromPath: string, toPath: string): Promise<void> {
     fs.renameSync(fromPath, toPath);
   }
@@ -143,7 +150,7 @@ export class NodeFileStore implements IFileStore {
  * `failNextWrite` 用于验证"临时文件已写但改名未执行"这一崩溃点。
  */
 export class MemoryFileStore implements IFileStore {
-  private readonly files: Map<string, string> = new Map<string, string>();
+  private readonly files: Map<string, string | Uint8Array> = new Map<string, string | Uint8Array>();
   private readonly dirs: Set<string> = new Set<string>();
   /** 注入的写失败次数（模拟磁盘满） */
   public failNextWrite: number = 0;
@@ -159,8 +166,9 @@ export class MemoryFileStore implements IFileStore {
   }
   async stat(p: string): Promise<FileStat | undefined> {
     if (this.files.has(p)) {
-      const v = this.files.get(p) as string;
-      return new NodeFileStat(Buffer.byteLength(v, 'utf8'), 0, FileKind.FILE);
+      const v = this.files.get(p) as string | Uint8Array;
+      const size: number = typeof v === 'string' ? Buffer.byteLength(v, 'utf8') : v.byteLength;
+      return new NodeFileStat(size, 0, FileKind.FILE);
     }
     if (this.dirs.has(p)) {
       return new NodeFileStat(0, 0, FileKind.DIR);
@@ -181,7 +189,30 @@ export class MemoryFileStore implements IFileStore {
     if (v === undefined) {
       throw new Error(`ENOENT: ${p}`);
     }
+    if (typeof v !== 'string') {
+      throw new Error(`MemoryFileStore.readText: ${p} holds binary data`);
+    }
     return v;
+  }
+  async writeBytes(p: string, data: Uint8Array): Promise<void> {
+    this.writeLog.push(p);
+    if (this.failNextWrite > 0) {
+      this.failNextWrite--;
+      throw new Error('ENOSPC: no space left on device (injected)');
+    }
+    this.files.set(p, new Uint8Array(data));
+    this.ensureDir(p.slice(0, p.lastIndexOf('/')));
+  }
+  async readBytes(p: string): Promise<Uint8Array> {
+    const v = this.files.get(p);
+    if (v === undefined) {
+      throw new Error(`ENOENT: ${p}`);
+    }
+    if (typeof v === 'string') {
+      const buf: Buffer = Buffer.from(v, 'utf8');
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    }
+    return new Uint8Array(v);
   }
   async rename(fromPath: string, toPath: string): Promise<void> {
     this.renameLog.push(`${fromPath}->${toPath}`);

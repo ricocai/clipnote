@@ -78,4 +78,58 @@ export class AtomicWriter {
       throw err;
     }
   }
+
+  /**
+   * 原子写入二进制（备份 ZIP 等）。协议与 `write` 完全相同：
+   * 临时写入 → fsync → 回读校验 → 同文件系统改名 → fsync 目录。
+   */
+  async writeBytes(path: string, data: Uint8Array, options?: AtomicWriteOptions): Promise<void> {
+    const verify: boolean = options === undefined || options.verify !== false;
+    const dir: string = dirOf(path);
+    await this.fs.mkdirp(dir);
+
+    const nonce: string = toHex(this.random.nextBytes(8));
+    const tempPath: string = `${path}${TEMP_SUFFIX_MARKER}${nonce}`;
+
+    try {
+      await this.fs.writeBytes(tempPath, data);
+      await this.fs.sync(tempPath);
+      if (verify) {
+        const actual: Uint8Array = await this.fs.readBytes(tempPath);
+        if (!bytesEqual(actual, data)) {
+          throw new Error(`atomic write verify failed: content mismatch at ${tempPath}`);
+        }
+      }
+      await this.fs.rename(tempPath, path);
+      await this.fs.sync(dir);
+    } catch (err) {
+      try {
+        if (await this.fs.exists(tempPath)) {
+          await this.fs.remove(tempPath);
+        }
+      } catch (cleanupErr) {
+        this.logger.log(LogLevel.WARN, 'atomic_write_cleanup_failed', {
+          tempPath,
+          reason: String(cleanupErr),
+        });
+      }
+      this.logger.log(LogLevel.ERROR, 'atomic_write_failed', {
+        path,
+        reason: String(err),
+      });
+      throw err;
+    }
+  }
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i: number = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
 }

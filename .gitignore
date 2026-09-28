@@ -37,3 +37,5 @@ local.properties
 *.tar.bz2
 *.7z
 *.log
+# G5 恢复演练运行产物
+/tools/.g5-tmp/
