@@ -23,6 +23,7 @@
   "include": [
     "./test/**/*.ts",
     "./probes/**/*.ts",
-    "../common/src/main/ets/core/**/*.ts"
+    "../common/src/main/ets/core/**/*.ts",
+    "../mcp/src/main/ets/core/**/*.ts"
   ]
 }

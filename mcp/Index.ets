@@ -1,14 +1,15 @@
 /**
  * mcp（HAR）：Agent 接入（设计 §4.5）。
  *
- * **本期（V0.1）刻意不实现协议与传输**，原因有三，且都是评审已采纳的结论：
- *  1. §4.5.1 要求「协议版本以目标 Host 实测为准」并显式标注。2026-07-28 规范已无状态化
- *     （移除 initialize 握手、新增 server/discover、移除 SSE 恢复），
- *     在锁定目标 Host 之前写协议适配层等于把返工写进代码；
- *  2. A1（HMAF 本机 Agent）与 A2（局域网外部 Agent）均为**待 PoC**，G2/G3 未通过前不投入；
- *  3. 工具级授权语义（§4.5.5）必须先于工具实现固化，否则会先出现"能调用但越权"的实现。
+ * **进度口径（S6-2 后）**：传输层已实现 —— Streamable HTTP（2025-11-25 语义）
+ * 服务端内核（`./src/main/ets/core/`，零 @kit.*，本机 50 用例验证）：受限子集
+ * HTTP/1.1、会话签发/校验、JSON-RPC 信封、受限 HTTP 服务端编排（Origin/Host 闸、
+ * Bearer 凭证、限速、SSE 流、配对长轮询）、配对码管理、每客户端凭证（代际绑定）、
+ * 自签证书 DER 编解码。TLS 用系统栈（TLSSocketServer），适配器在 `./src/main/ets/adapters/`。
  *
- * 本文件冻结的是**授权语义与工具契约**，这部分不随协议版本变化。
+ * **仍未实现（S6-3）**：`IMcpAdapter` 的协议适配（initialize 协商负载、
+ * tools/* 分发、AccessPolicy 服务端强制接入 McpDispatcher）—— 见 S6-1/S6-3。
+ * 工具级授权语义与工具契约（本文件前半部分）不随协议版本变化。
  */
 
 /** 首发工具集合。注意：Resources / Prompts 按客户端需要再增，不预置。 */
@@ -65,3 +66,18 @@ export interface ITransportAdapter {
   stop(): Promise<void>;
   isRunning(): boolean;
 }
+
+// ---- 传输内核（S6-2；分层纪律同 common：core 零 @kit.*，可本机全量验证） ----
+export * from './src/main/ets/core/transport-ports';
+export * from './src/main/ets/core/http11';
+export * from './src/main/ets/core/jsonrpc';
+export * from './src/main/ets/core/session';
+export * from './src/main/ets/core/credentials';
+export * from './src/main/ets/core/pairing';
+export * from './src/main/ets/core/x509-selfsign';
+export * from './src/main/ets/core/endpoint';
+export * from './src/main/ets/core/server';
+
+// ---- 鸿蒙适配（@kit.* 只允许出现在 adapters/；真机验证项 R-A 见各文件头注释） ----
+export { HarmonyTlsServerSocket, HarmonyTcpServerSocket } from './src/main/ets/adapters/harmony-tls-socket';
+export { HarmonyCertificateAuthority } from './src/main/ets/adapters/harmony-certificate-authority';

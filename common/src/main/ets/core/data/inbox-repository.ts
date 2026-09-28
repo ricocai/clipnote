@@ -82,6 +82,16 @@ export class InboxRepository {
     return true;
   }
 
+  /** 物理删除单条（用户明确删除 / 容量淘汰）；返回是否命中 */
+  async deleteById(id: string): Promise<boolean> {
+    const existing = await this.getById(id);
+    if (existing === undefined) {
+      return false;
+    }
+    await this.deps.db.execute(`DELETE FROM clipboard_item WHERE id = ?`, [id]);
+    return true;
+  }
+
   /** 清理超过保留期的条目（所有状态）；返回清理条数 */
   async purgeExpired(nowMs: number): Promise<number> {
     const n: number = await this.countWhere(`expires_at <= ?`, [nowMs]);

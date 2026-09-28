@@ -15,6 +15,7 @@ export * from './src/main/ets/core/id';
 export * from './src/main/ets/core/atomicfs';
 export * from './src/main/ets/core/blob-cas';
 export * from './src/main/ets/core/clip';
+export * from './src/main/ets/core/inbox';
 export * from './src/main/ets/core/markdown';
 export * from './src/main/ets/core/speech';
 export * from './src/main/ets/core/backup';
