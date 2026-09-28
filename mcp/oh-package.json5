@@ -1,7 +1,7 @@
 {
   "name": "mcp",
   "version": "0.1.0",
-  "description": "MCP 接入（协议适配 + 传输适配）。本期仅冻结工具级授权语义与协议版本占位，实现在 G3 门槛通过后填充（设计 §4.5）。",
+  "description": "MCP 接入（协议适配 + 传输适配）。S6-2 已实现 Streamable HTTP 服务端传输内核与 TLS/TOFU 配对（设计 §4.5.3）；协议适配（IMcpAdapter）在 S6-3 填充。",
   "main": "Index.ets",
   "author": "",
   "license": "Apache-2.0",
