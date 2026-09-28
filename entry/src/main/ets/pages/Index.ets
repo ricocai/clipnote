@@ -1,5 +1,4 @@
-import { pasteboard } from '@kit.BasicServicesKit';
-import { router } from '@kit.ArkUI';
+import { PasteButtonOnClickResult, router } from '@kit.ArkUI';
 import {
   AppContextHolder,
   AppDataRuntime,
@@ -13,6 +12,8 @@ import {
   CryptoHasher,
   CryptoRandom,
   DEFAULT_INBOX_CAPACITY,
+  ForegroundCheck,
+  ForegroundPromptController,
   HilogLogger,
   INBOX_LIST_LIMIT,
   InboxService,
@@ -20,8 +21,10 @@ import {
   SandboxFileStore,
   Sensitivity,
   SystemClock,
+  SystemPasteboardProbe,
   sensitivityReasonLabel,
 } from 'common';
+import { EVENT_FOREGROUND } from '../EntryEvents';
 
 /**
  * 依赖装配（最薄的一层）。
@@ -207,12 +210,99 @@ struct Index {
   @State confirmLevel: string = '';
   @State confirmReasons: string = '';
   @State confirmPreview: string = '';
+  /**
+   * 「回前台提示条」的展示位（S2-4）。判定逻辑（何时弹/继续/停止）全部在
+   * common 领域内核 ForegroundPromptController（Node 用例覆盖），这里只反映其结果。
+   */
+  @State promptOpen: boolean = false;
 
   private readonly svc: AppServices = AppServices.get();
   private inboxSvc: InboxService | undefined = undefined;
+  /** 剪贴板唯一接触面（S2-4）：hasData 只探测布尔；readText 只在用户手势后调用 */
+  private readonly probe: SystemPasteboardProbe = new SystemPasteboardProbe();
+  private readonly fgPrompt: ForegroundPromptController = new ForegroundPromptController();
+  /** 入口互斥：安全控件 / 直接读取（降级）/ 提示条，同一时间至多一条"读取"在途 */
+  private readBusy: boolean = false;
+  private fgChecking: boolean = false;
+  private fgHandler: (() => void) | undefined = undefined;
 
   aboutToAppear(): void {
+    this.subscribeForeground();
     this.initData();
+    this.checkForeground();
+  }
+
+  onPageShow(): void {
+    // 从其他页面返回时复查。检测只是"读布尔"，且同一内容集内不重复弹（状态机保证），不会打扰
+    this.checkForeground();
+    this.refreshInbox();
+  }
+
+  aboutToDisappear(): void {
+    if (this.fgHandler === undefined) {
+      return;
+    }
+    try {
+      const host = this.getUIContext().getHostContext();
+      if (host !== undefined && host !== null) {
+        host.eventHub.off(EVENT_FOREGROUND, this.fgHandler);
+      }
+    } catch (err) {
+      // 反订阅失败同样只影响自动提示，不打扰用户
+    }
+    this.fgHandler = undefined;
+  }
+
+  /** 订阅 EntryAbility.onForeground 广播（S2-4）。订阅失败只是失去自动提示，手动入口不受影响 */
+  private subscribeForeground(): void {
+    if (this.fgHandler !== undefined) {
+      return;
+    }
+    this.fgHandler = (): void => {
+      this.checkForeground();
+    };
+    try {
+      const host = this.getUIContext().getHostContext();
+      if (host !== undefined && host !== null) {
+        host.eventHub.on(EVENT_FOREGROUND, this.fgHandler);
+      }
+    } catch (err) {
+      // 订阅失败 = 只失去自动提示，不影响手动入口，不打扰用户
+    }
+  }
+
+  /**
+   * 回前台检查（S2-4 口径核心）：只探测"有没有内容"，**不读取、不落盘任何内容**。
+   * 是否读取由用户点击提示条决定（用户手势）；"是否重复弹"由内核状态机回答。
+   */
+  private async checkForeground(): Promise<void> {
+    if (this.fgChecking) {
+      return;
+    }
+    this.fgChecking = true;
+    try {
+      const res: ForegroundCheck = await this.fgPrompt.checkOnForeground(this.probe);
+      this.promptOpen = res !== ForegroundCheck.NONE;
+    } finally {
+      this.fgChecking = false;
+    }
+  }
+
+  /** 提示条"查看并保存"：此刻才读取（用户手势），走统一采集管线 */
+  private acceptPrompt(): void {
+    if (!this.dataReady) {
+      this.notice = '数据层尚未就绪，稍后再点。';
+      return; // 保持提示条，不吃掉本集
+    }
+    this.fgPrompt.accept();
+    this.promptOpen = false;
+    this.readBoardAndCapture(ClipEntry.RETURN_TO_FOREGROUND);
+  }
+
+  /** 提示条"忽略"：本内容集内不再弹（设计 §4.1：拒绝授权后不得反复打扰） */
+  private dismissPrompt(): void {
+    this.fgPrompt.dismiss();
+    this.promptOpen = false;
   }
 
   private async initData(): Promise<void> {
@@ -241,28 +331,37 @@ struct Index {
   /**
    * 显式用户操作才读取剪贴板（设计 §4.1 矩阵：不预设本应用拥有后台读取权）。
    * 失败必须如实提示，不静默吞掉 —— 权限/空内容/系统控件拦截是三种不同原因。
+   * 三个入口共用本方法：提示条（回前台）、安全控件、直接读取（降级）。
    */
-  private async captureFromPasteboard(): Promise<void> {
+  private async readBoardAndCapture(entry: ClipEntry): Promise<void> {
     if (this.inboxSvc === undefined) {
       this.notice = '数据层尚未就绪，请稍后再试。';
       return;
     }
+    if (this.readBusy) {
+      return;
+    }
+    this.readBusy = true;
     try {
-      const board: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
-      const data: pasteboard.PasteData = await board.getData();
-      const text: string = data.getPrimaryText();
+      // 用户已经用显式入口处理了当前内容（无论成败），收起并抑制同内容的提示条：
+      // 失败场景若保留提示，会造成"再点→再弹窗→再拒"的骚扰链（设计：拒绝后不得反复打扰）
+      this.fgPrompt.accept();
+      this.promptOpen = false;
+      const text: string = await this.probe.readText();
       if (text.length === 0) {
         this.notice = '剪贴板当前没有可保存的文本。';
         return;
       }
       const result: CaptureResult = await this.inboxSvc.capture({
-        text,
-        entry: ClipEntry.MANUAL,
+        text: text,
+        entry: entry,
       });
       await this.applyCapture(result);
     } catch (err) {
       // 不区分具体原因地"提示成功"是常见劣化：这里明确告知用户读取失败且未保存
       this.notice = `读取剪贴板失败，未保存任何内容。原因：${String(err)}`;
+    } finally {
+      this.readBusy = false;
     }
   }
 
@@ -390,22 +489,91 @@ struct Index {
 
   build() {
     Column({ space: 12 }) {
-      Text('拾记 ClipNote')
-        .fontSize(24)
-        .fontWeight(FontWeight.Bold)
+      Row() {
+        Text('拾记 ClipNote')
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .layoutWeight(1)
+        Text('设置')
+          .fontSize(13)
+          .fontColor('#8C8C8C')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/Settings' });
+          })
+      }
+      .width('100%')
+
+      // 回前台提示条（S2-4）：只反映"剪贴板里有内容"这一布尔事实，未读取内容
+      if (this.promptOpen && this.confirmItem === undefined) {
+        Column({ space: 8 }) {
+          Text('检测到剪贴板里有内容可保存（尚未读取）')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#1F6FEB')
+            .width('100%')
+          Text('点「查看并保存」后才会读取剪贴板并预览；忽略后本条不再重复出现，剪贴板内容变化后才会再次提示。')
+            .fontSize(11)
+            .fontColor('#8C8C8C')
+            .width('100%')
+          Row({ space: 12 }) {
+            Button('查看并保存')
+              .layoutWeight(1)
+              .enabled(this.dataReady && !this.readBusy)
+              .onClick(() => {
+                this.acceptPrompt();
+              })
+            Button('忽略')
+              .layoutWeight(1)
+              .backgroundColor('#F5F5F5')
+              .fontColor('#333333')
+              .onClick(() => {
+                this.dismissPrompt();
+              })
+          }
+          .width('100%')
+        }
+        .alignItems(HorizontalAlign.Start)
         .width('100%')
+        .padding(12)
+        .backgroundColor('#F0F6FF')
+        .borderRadius(8)
+        .border({ width: 1, color: '#B7D3F7' })
+      }
 
       // 能力边界必须如实展示（设计 §4.1）：这里的措辞不是免责声明，而是产品事实
-      Text('本应用不会在后台或息屏时持续监听剪贴板。请在需要时主动点击下方按钮保存。')
+      Text('本应用不会在后台或息屏时持续监听剪贴板，也不补采回前台之前的历史复制。保存请在需要时主动操作。')
         .fontSize(12)
         .fontColor('#8C8C8C')
         .width('100%')
 
-      Button('从剪贴板保存')
+      // 首选路径：系统安全控件（S2-4；G1 探测报告 §5-⑤：可行且应为第一选择）。
+      // 样式受系统校验（不可自定义图标/文本，透明、过小、被遮挡都会导致授权失败），保持默认样式。
+      // SUCCESS 时已获临时授权，读取不弹窗、免 READ_PASTEBOARD；FAILED 不硬读、转降级入口。
+      Text('首选：粘贴安全控件（点一下即存，通常无系统弹窗）')
+        .fontSize(11)
+        .fontColor('#8C8C8C')
         .width('100%')
-        .enabled(this.dataReady && this.confirmItem === undefined)
+      PasteButton()
+        .width('100%')
+        .height(40)
+        .onClick((event: ClickEvent, result: PasteButtonOnClickResult) => {
+          if (result === PasteButtonOnClickResult.SUCCESS) {
+            this.readBoardAndCapture(ClipEntry.PASTE_BUTTON);
+          } else {
+            this.notice = '安全控件本次未授予临时读取权限（样式或系统策略限制）；可改用下方直接读取。';
+          }
+        })
+
+      // 降级入口（G1 报告 §5-⑤链路最后一级）：普通按钮 + 系统弹窗。
+      // 未授权时可能报 201，如实展示即可；不自动重试、不反复重试（拒绝授权后不得反复打扰）。
+      Button('直接读取剪贴板并保存（降级，可能触发系统权限弹窗）')
+        .width('100%')
+        .fontSize(13)
+        .backgroundColor('#F5F5F5')
+        .fontColor('#333333')
+        .enabled(this.dataReady && this.confirmItem === undefined && !this.readBusy)
         .onClick(() => {
-          this.captureFromPasteboard();
+          this.readBoardAndCapture(ClipEntry.MANUAL);
         })
 
       if (this.notice.length > 0) {
