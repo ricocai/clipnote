@@ -11,6 +11,8 @@ import {
 } from 'common';
 import { G1ProbeLog } from '../probe/G1ProbeLog';
 import { probeForegroundRead, probeShareUriCopy, probeShareWant, recordDeviceInfo } from '../probe/G1ProbeScenes';
+import { EVENT_FOREGROUND } from '../EntryEvents';
+import { handleSharedWant } from '../share/share-intake';
 
 const DOMAIN: number = 0xF1C0;
 const TAG: string = 'ClipNote';
@@ -36,6 +38,8 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, TAG, 'data runtime init failed: %{public}s', String(err));
       });
     hilog.info(DOMAIN, TAG, '%{public}s', 'ability onCreate');
+    // S2-3 分享接收：非分享 want 在 handleSharedWant 内直接返回；全程不抛、不阻塞启动
+    handleSharedWant(want, 'onCreate');
     // ===== G1 PROBE BEGIN（WHY-90 临时设施，G1 验收后整体移除）=====
     // 只记录不拦截：任何探针异常都不允许影响正常启动路径。
     try {
@@ -52,6 +56,8 @@ export default class EntryAbility extends UIAbility {
   // ===== G1 PROBE BEGIN（WHY-90：分享已启动实例时走 onNewWant，探测后随探针块移除）=====
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     super.onNewWant(want, launchParam);
+    // S2-3 分享接收（已运行实例的分享到达路径）
+    handleSharedWant(want, 'onNewWant');
     try {
       probeShareWant(want, 'onNewWant');
       probeShareUriCopy(want);
@@ -82,6 +88,9 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     // 设计 §4.1：回到前台只是"检查当前可读内容并提示保存"，**不是历史补采**，
     // 也不得在用户拒绝授权后反复打扰。因此这里不做任何自动读取动作。
+    // S2-4：本层唯一动作是向页面广播"检查机会"事件；页面（Index）检测到内容也只弹
+    // 提示条，读取必须等用户点击提示条（用户手势）才发生 —— 本层零读取、零落盘。
+    this.context.eventHub.emit(EVENT_FOREGROUND);
     hilog.info(DOMAIN, TAG, '%{public}s', 'ability onForeground');
     // ===== G1 PROBE BEGIN（WHY-90 临时设施）=====
     // 注意：这是一次"故意违反上面产品口径"的探测 —— 验证无手势时机下系统是否放行读取、

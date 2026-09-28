@@ -10,6 +10,7 @@ import {
   attachmentVirtualPath,
   ATTACHMENT_SCHEME,
   IMarkdownTokenizer,
+  mdTokensFromJson,
 } from '../../common/src/main/ets/core/markdown';
 import { BlockType, DocumentBlock } from '../../common/src/main/ets/core/model';
 import { MarkdownItTokenizer } from './support/platform';
@@ -153,4 +154,29 @@ test('未覆盖语法在 keepRawBlocks=false 时被丢弃而不报错', () => {
 test('空文档产出空块列表', () => {
   assert.deepEqual(parse(''), []);
   assert.deepEqual(parse('\n\n'), []);
+});
+
+test('mdTokensFromJson：桥接 JSON 往返与真实 markdown-it 直出等价（S3-2 桥接 Schema）', () => {
+  const md = '# 标题\n\n正文 **加粗** 与 `代码`。\n\n- 甲\n- 乙\n\n![图](attachment://' + SHA + ')\n\n> 引用\n\n```ts\nconst a = 1;\n```';
+  // 模拟桥接：真实 markdown-it 产出 → JSON 序列化（reader.js slimToken 同构）→ 还原
+  const direct = parseDocument(tokenizer, md, { docRevision: 3 });
+  const rawTokens = (tokenizer as unknown as { parse: (s: string) => unknown[] }).parse(md);
+  const restored = mdTokensFromJson(JSON.stringify(rawTokens));
+  const viaBridge = parseDocument({ parse: () => restored }, md, { docRevision: 3 });
+  assert.deepEqual(viaBridge, direct);
+});
+
+test('mdTokensFromJson：字段缺失给缺省值而不是抛错（桥接两侧版本演进容忍）', () => {
+  const payload = JSON.stringify([{ type: 'paragraph_open' }, { type: 'inline', content: 'x', children: null }]);
+  const tokens = mdTokensFromJson(payload);
+  assert.equal(tokens.length, 2);
+  assert.equal(tokens[0].tag, '');
+  assert.equal(tokens[0].nesting, 0);
+  assert.equal(tokens[0].map, null);
+  assert.equal(tokens[1].children, null);
+});
+
+test('mdTokensFromJson：非数组负载抛错（桥接故障不得静默成"空文档"）', () => {
+  assert.throws(() => mdTokensFromJson('{}'), /not an array/);
+  assert.throws(() => mdTokensFromJson('null'), /not an array/);
 });

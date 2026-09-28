@@ -26,6 +26,11 @@ export class NodeSqliteExecutor implements IRdbExecutor {
     return new NodeSqliteExecutor(new DatabaseSync(':memory:'));
   }
 
+  /** 文件库（G5 恢复演练：进程被杀后重开，验证 SQLite 日志恢复语义） */
+  static openFile(path: string): NodeSqliteExecutor {
+    return new NodeSqliteExecutor(new DatabaseSync(path));
+  }
+
   async execute(sql: string, params?: SqlValue[]): Promise<void> {
     this.db.prepare(sql).run(...toParams(params));
   }
