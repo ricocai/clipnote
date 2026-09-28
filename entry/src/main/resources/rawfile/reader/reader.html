@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <!--
+    ClipNote MD 阅读域（可信页面；设计 §4.3 / §4.4 / G6）。
+
+    信任模型：
+     - 本页与全部脚本均随应用包发布（resource://rawfile/），属可信域；
+       笔记正文是**不可信输入**，只经 parseDocument 块模型 → buildReaderHtml
+       （全量 HTML 转义 + 附件 ID 白名单）进入 DOM，任何输入都不可能变成脚本/外链；
+     - CSP 是纵深防御：script-src 'self'（无 inline、无 eval）、
+       img-src 只允许 attachment: 与 data:、default-src 'none' 切断其余一切
+       （connect/media/font/object/base-uri/form-action）；
+     - attachment:// 请求全部由 ArkTS 侧 onInterceptRequest 拦截，只按
+       「本篇笔记已授权的附件摘要」映射沙箱 blob（见 pages/NoteRead.ets）；
+     - 若真机实测发现 ArkWeb 的 runJavaScript 注入受 CSP script-src 限制，
+       以 SDK 实际行为为准修正（文件头纪律声明同 entry 其余 ArkWeb 调用）。
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; img-src attachment: data:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阅读</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0; padding: 16px 18px 48px;
+      font-family: system-ui, -apple-system, "PingFang SC", "HarmonyOS Sans", sans-serif;
+      font-size: 16px; line-height: 1.75; color: #262626;
+      background: #FFFFFF; word-wrap: break-word;
+    }
+    h1, h2, h3, h4, h5, h6 { line-height: 1.4; margin: 1.1em 0 0.5em; }
+    h1 { font-size: 1.5em; } h2 { font-size: 1.3em; } h3 { font-size: 1.15em; }
+    p { margin: 0.6em 0; }
+    ul { margin: 0.4em 0; padding-left: 1.4em; }
+    blockquote {
+      margin: 0.6em 0; padding: 2px 12px;
+      border-left: 3px solid #D9D9D9; color: #595959;
+    }
+    pre {
+      margin: 0.6em 0; padding: 10px 12px; overflow-x: auto;
+      background: #F7F7F7; border-radius: 6px;
+      font-size: 0.86em; line-height: 1.55;
+    }
+    pre.cl-code::before {
+      content: attr(data-lang);
+      display: block; color: #8C8C8C; font-size: 0.85em; margin-bottom: 4px;
+    }
+    pre.cl-code[data-lang=""]::before { content: none; }
+    hr { border: none; border-top: 1px solid #E8E8E8; margin: 1.2em 0; }
+    figure { margin: 0.8em 0; }
+    figure img { max-width: 100%; border-radius: 6px; display: block; }
+    figcaption { font-size: 0.82em; color: #8C8C8C; margin-top: 4px; }
+    .cl-image-missing { color: #8C8C8C; font-size: 0.9em; }
+    /* 长文滚动性能：屏外块跳过渲染，占位高度避免滚动条抖动 */
+    #root > * { content-visibility: auto; contain-intrinsic-size: auto 160px; }
+  </style>
+</head>
+<body>
+  <main id="root"></main>
+  <!-- markdown-it.min.js 为 vendored 依赖（MIT，markdown-it 14.3.2 UMD，全局名 markdownit），
+       与 tools/node_modules 版本一致；升级时需同步两侧 -->
+  <script src="markdown-it.min.js"></script>
+  <script src="reader.js"></script>
+  <script src="bridge.js"></script>
+</body>
+</html>

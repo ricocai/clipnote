@@ -85,4 +85,13 @@ export class AppServices {
     }
     return this.noteSvc;
   }
+
+  /**
+   * 阅读页附件字节通道：只按内容摘要经 BlobCas 寻址读取（路径完全由摘要派生，
+   * 天然无越界风险；设计 §4.4「文件映射只按授权附件 ID 查找」）。
+   */
+  async readAttachmentBytes(sha: string): Promise<Uint8Array> {
+    const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+    return rt.blobCas.readBytes(sha);
+  }
 }

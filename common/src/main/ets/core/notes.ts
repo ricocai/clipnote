@@ -12,7 +12,7 @@
  * 引用格式：`attachment://<sha256>`（markdown.ts 的单一协议，渲染/导出共用）。
  */
 
-import { AttachmentRole, BlobSha256, BlobStatus, Note, NoteAttachment, NoteId, NoteSource, Tag } from './model';
+import { AttachmentRole, BlobRecord, BlobSha256, BlobStatus, Note, NoteAttachment, NoteId, NoteSource, Tag } from './model';
 import { IHasher, ILogger, LogLevel } from './ports';
 import { BlobCas } from './blob-cas';
 import { IRdbExecutor, transact } from './data/rdb';
@@ -139,6 +139,29 @@ export class NoteService {
 
   async listAttachmentsOf(noteId: NoteId): Promise<NoteAttachment[]> {
     return this.deps.blobs.listAttachmentsOf(noteId);
+  }
+
+  /**
+   * 阅读页渲染用读模型：本篇 INLINE_IMAGE 附件 + 登记 MIME（onInterceptRequest
+   * 响应头的事实源；MIME 来自入库登记，不做嗅探）。记录缺失的附件跳过并记日志，
+   * 由 G5 恢复扫描兜底完整性口径。
+   */
+  async listRenderableImages(noteId: NoteId): Promise<Array<{ sha256: BlobSha256; mime: string }>> {
+    const attachments: NoteAttachment[] = await this.deps.blobs.listAttachmentsOf(noteId);
+    const out: Array<{ sha256: BlobSha256; mime: string }> = [];
+    for (let i: number = 0; i < attachments.length; i++) {
+      const a: NoteAttachment = attachments[i];
+      if (a.role !== AttachmentRole.INLINE_IMAGE) {
+        continue;
+      }
+      const record: BlobRecord | undefined = await this.deps.blobs.get(a.blobSha256);
+      if (record === undefined) {
+        this.deps.logger.log(LogLevel.WARN, 'note_renderable_image_missing_record', { noteId, sha256: a.blobSha256 });
+        continue;
+      }
+      out.push({ sha256: a.blobSha256, mime: record.mime });
+    }
+    return out;
   }
 
   /**

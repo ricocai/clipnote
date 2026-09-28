@@ -10,8 +10,9 @@ import { flatPreview, relativeTimeLabel } from '../ui/Format';
  *  - 一次加载 ≤ NOTE_PAGE_LIMIT 条（LIMIT 约束，不一次载入全库）；
  *  - 行内标签为本地 SQL 逐条查询（单条亚毫秒；若 10k 规模出现掉帧，
  *    优化路径是搜索页落地时一并换成批量查询，先记录不去预付复杂度）；
- *  - 滑动操作只有两个：收藏（置顶）切换、删除（= 移入回收站，软删除）。
+ *  - 滑动操作有三个：收藏（置顶）切换、编辑、删除（= 移入回收站，软删除）。
  *    删除必须经确认弹窗；回收站条目的查看/恢复入口随 V0.1 搜索组织任务落地（S3-2）。
+ *  - 点行进阅读页（S3-2 起）；编辑从滑动操作或阅读页进入。
  *  - 列表排序跟随领域查询：置顶优先，其余更新时间倒序（S3-1 起）。
  */
 
@@ -83,6 +84,11 @@ struct NoteList {
     this.rows = built;
   }
 
+  private openReader(id: string): void {
+    const params: Record<string, string> = { 'noteId': id };
+    router.pushUrl({ url: 'pages/NoteRead', params: params });
+  }
+
   private openEditor(id: string): void {
     const params: Record<string, string> = { 'noteId': id };
     router.pushUrl({ url: 'pages/NoteEdit', params: params });
@@ -143,6 +149,14 @@ struct NoteList {
         .fontColor('#333333')
         .onClick(() => {
           this.togglePin(row);
+        })
+      Button('编辑')
+        .fontSize(12)
+        .height(44)
+        .backgroundColor('#F5F5F5')
+        .fontColor('#333333')
+        .onClick(() => {
+          this.openEditor(row.id);
         })
       Button('删除')
         .fontSize(12)
@@ -236,7 +250,7 @@ struct NoteList {
               .borderRadius(8)
             }
             .onClick(() => {
-              this.openEditor(row.id);
+              this.openReader(row.id);
             })
             .swipeAction({ end: this.itemEnd(row) })
           }, (row: NoteRow) => row.id)
