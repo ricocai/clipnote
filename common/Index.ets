@@ -20,6 +20,7 @@ export * from './src/main/ets/core/share';
 export * from './src/main/ets/core/notes';
 export * from './src/main/ets/core/foreground';
 export * from './src/main/ets/core/markdown';
+export * from './src/main/ets/core/htmlsafe';
 export * from './src/main/ets/core/speech';
 export * from './src/main/ets/core/backup';
 export * from './src/main/ets/core/search/tokenizer';

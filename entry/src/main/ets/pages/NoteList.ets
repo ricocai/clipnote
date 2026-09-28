@@ -1,5 +1,5 @@
 import { router } from '@kit.ArkUI';
-import { Note, NoteService } from 'common';
+import { CONTENT_TYPE_HTML, htmlToPlainText, Note, NoteService } from 'common';
 import { AppServices } from '../services/AppServices';
 import { flatPreview, relativeTimeLabel } from '../ui/Format';
 
@@ -27,6 +27,8 @@ interface NoteRow {
   readonly tagsLabel: string;
   readonly timeLabel: string;
   readonly pinned: boolean;
+  /** 'text/html' 行进受控展示页（S3-3），只读、无编辑入口 */
+  readonly contentType: string;
 }
 
 @Entry
@@ -75,18 +77,22 @@ struct NoteList {
       built.push({
         id: n.id,
         title: n.title,
-        preview: flatPreview(n.contentMd, 120),
+        // HTML 笔记预览先剥标签取纯文本（S3-3），不展示原始标签 soup
+        preview: n.contentType === CONTENT_TYPE_HTML ? flatPreview(htmlToPlainText(n.contentMd), 120) : flatPreview(n.contentMd, 120),
         tagsLabel: tagText,
         timeLabel: relativeTimeLabel(n.updatedAtMs),
         pinned: n.pinned,
+        contentType: n.contentType,
       });
     }
     this.rows = built;
   }
 
-  private openReader(id: string): void {
+  private openReader(id: string, contentType: string): void {
     const params: Record<string, string> = { 'noteId': id };
-    router.pushUrl({ url: 'pages/NoteRead', params: params });
+    // HTML 笔记进受控展示页（S3-3；G6 渲染隔离），其余进 MD 阅读页
+    const page: string = contentType === CONTENT_TYPE_HTML ? 'pages/HtmlRead' : 'pages/NoteRead';
+    router.pushUrl({ url: page, params: params });
   }
 
   private openEditor(id: string): void {
@@ -150,14 +156,17 @@ struct NoteList {
         .onClick(() => {
           this.togglePin(row);
         })
-      Button('编辑')
-        .fontSize(12)
-        .height(44)
-        .backgroundColor('#F5F5F5')
-        .fontColor('#333333')
-        .onClick(() => {
-          this.openEditor(row.id);
-        })
+      // HTML 笔记只读语义（S3-3）：不提供编辑入口，点行进受控展示页
+      if (row.contentType !== CONTENT_TYPE_HTML) {
+        Button('编辑')
+          .fontSize(12)
+          .height(44)
+          .backgroundColor('#F5F5F5')
+          .fontColor('#333333')
+          .onClick(() => {
+            this.openEditor(row.id);
+          })
+      }
       Button('删除')
         .fontSize(12)
         .height(44)
@@ -215,7 +224,7 @@ struct NoteList {
           ForEach(this.rows, (row: NoteRow) => {
             ListItem() {
               Column({ space: 4 }) {
-                Text(`${row.pinned ? '📌 ' : ''}${row.title}`)
+                Text(`${row.pinned ? '📌 ' : ''}${row.contentType === CONTENT_TYPE_HTML ? '[HTML] ' : ''}${row.title}`)
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
                   .maxLines(1)
@@ -250,7 +259,7 @@ struct NoteList {
               .borderRadius(8)
             }
             .onClick(() => {
-              this.openReader(row.id);
+              this.openReader(row.id, row.contentType);
             })
             .swipeAction({ end: this.itemEnd(row) })
           }, (row: NoteRow) => row.id)

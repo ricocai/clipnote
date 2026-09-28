@@ -27,6 +27,7 @@ import {
 import { ClipIngestService, IngestImageInput } from './clip';
 import { InboxRepository } from './data/inbox-repository';
 import { NoteRepository } from './data/note-repository';
+import { CONTENT_TYPE_HTML, looksLikeHtml } from './htmlsafe';
 import { IClock, ILogger, LogLevel } from './ports';
 
 /** 收件箱容量上限（按 PENDING 条数计，超限淘汰最旧） */
@@ -167,6 +168,8 @@ export class InboxService {
   /**
    * 存为笔记：以收件箱条目正文建笔记（首行作标题、来源按入口映射、origin_hash 记内容摘要），
    * 条目标记 ACCEPTED —— 从收件箱列表消失，物理行由保留期清理收尾。
+   * 正文判定为 HTML 文档时 contentType 记 'text/html'（S3-3；设计 §4.4），
+   * 该笔记此后只能进受控展示页（只读），不进 Markdown 编辑渲染链路。
    */
   async acceptAsNote(id: string): Promise<Note> {
     const item: ClipboardItem | undefined = await this.deps.inbox.getById(id);
@@ -176,17 +179,20 @@ export class InboxService {
     if (item.state !== InboxState.PENDING) {
       throw new Error(`InboxService.acceptAsNote: item ${id} state=${item.state}, not pending`);
     }
+    const contentType: string = looksLikeHtml(item.rawText) ? CONTENT_TYPE_HTML : 'text/markdown';
     const note: Note = await this.deps.notes.create({
       title: deriveTitle(item.rawText),
       contentMd: item.rawText,
       source: noteSourceOf(item.entry),
       originHash: item.sha256,
+      contentType,
     });
     await this.deps.inbox.updateState(id, InboxState.ACCEPTED);
     this.deps.logger.log(LogLevel.INFO, 'inbox_accepted_as_note', {
       id,
       noteId: note.id,
       kind: item.kind,
+      contentType,
     });
     return note;
   }
