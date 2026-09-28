@@ -148,6 +148,28 @@ test('InboxService: 存为笔记（标题/来源/originHash/状态迁移），�
   await assert.rejects(() => f.svc.acceptAsNote('no-such-id'), /not found/);
 });
 
+test('InboxService: 存为笔记按正文判定 contentType（HTML 文档 → text/html，只读口径）', async () => {
+  const f = await makeFixture();
+  // 普通文本：保持 markdown 口径（S3-3 不改动存量行为）
+  const md = await f.svc.capture({ text: '会议纪要\n\n第二条行内容', entry: ClipEntry.MANUAL });
+  const mdNote = await f.svc.acceptAsNote(md.item.id);
+  assert.equal(mdNote.contentType, 'text/markdown');
+
+  // HTML 文档（doctype 前缀）：contentType 记 text/html，正文原样保留、不清洗
+  const htmlDoc = '<!DOCTYPE html><html><body><h1>标题</h1><p>正文</p></body></html>';
+  const html = await f.svc.capture({ text: htmlDoc, entry: ClipEntry.SHARE });
+  const htmlNote = await f.svc.acceptAsNote(html.item.id);
+  assert.equal(htmlNote.contentType, 'text/html');
+  assert.equal(htmlNote.contentMd, htmlDoc);
+  assert.equal(htmlNote.source, NoteSource.SHARE);
+
+  // 含 ≥2 块级标签的片段同样认定；单标签/散文不误判
+  const frag = await f.svc.capture({ text: '<div><table><tr><td>x</td></tr></table></div>', entry: ClipEntry.MANUAL });
+  assert.equal((await f.svc.acceptAsNote(frag.item.id)).contentType, 'text/html');
+  const prose = await f.svc.capture({ text: '讨论 a<b 与 c>d 的大小', entry: ClipEntry.MANUAL });
+  assert.equal((await f.svc.acceptAsNote(prose.item.id)).contentType, 'text/markdown');
+});
+
 test('InboxService: 单条删除（物理）与一键清空', async () => {
   const f = await makeFixture();
   const a = await f.svc.capture({ text: '内容甲', entry: ClipEntry.MANUAL });

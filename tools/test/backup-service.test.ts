@@ -119,7 +119,7 @@ test('导出 → 空库恢复：内容与关系逐字段一致（G5 可核对口
   // 恢复到空库
   const dst = await makeWorld();
   // 目标库也需要这个 zip：跨世界拷贝（模拟用户把包带到新设备）
-  await dst.fs.writeBytes(exported.zipPath, zipBytes);
+  await dst.fs.writeRawBytes(exported.zipPath, zipBytes);
   const result = await dst.service.restoreBackup(exported.zipPath);
   assert.equal(result.ok, true, JSON.stringify(result.issues));
   assert.deepEqual(result.restored, { notes: 2, blobs: 1, attachments: 1, tags: 1 });
@@ -167,7 +167,7 @@ test('负向：篡改 manifest（注入凭证字段）被拒，现有数据不�
     { name: MANIFEST_ENTRY, data: utf8Encode(tampered) },
     ...readZip(zipBytes).entries.filter((e) => e.name !== MANIFEST_ENTRY),
   ]);
-  await src.fs.writeBytes('sandbox/backups/tampered.zip', badZip);
+  await src.fs.writeRawBytes('sandbox/backups/tampered.zip', badZip);
 
   const before = await snapshotOf(src);
   const result = await src.service.restoreBackup('sandbox/backups/tampered.zip');
@@ -185,7 +185,7 @@ test('负向：篡改 manifest（非法笔记身份 / 悬空引用）被拒', as
   const badId = { ...JSON.parse(JSON.stringify(manifest)) };
   badId.notes[0].id = 'not-a-uuid';
   const zip1 = buildZip([{ name: MANIFEST_ENTRY, data: utf8Encode(JSON.stringify(badId)) }]);
-  await src.fs.writeBytes('sandbox/backups/bad1.zip', zip1);
+  await src.fs.writeRawBytes('sandbox/backups/bad1.zip', zip1);
   const r1 = await src.service.restoreBackup('sandbox/backups/bad1.zip');
   assert.equal(r1.ok, false);
   assert.ok(r1.issues.some((i) => i.code === 'invalid_note_id'));
@@ -193,7 +193,7 @@ test('负向：篡改 manifest（非法笔记身份 / 悬空引用）被拒', as
   const dangling = { ...JSON.parse(JSON.stringify(manifest)) };
   dangling.noteAttachments[0].blobSha256 = 'f'.repeat(64);
   const zip2 = buildZip([{ name: MANIFEST_ENTRY, data: utf8Encode(JSON.stringify(dangling)) }]);
-  await src.fs.writeBytes('sandbox/backups/bad2.zip', zip2);
+  await src.fs.writeRawBytes('sandbox/backups/bad2.zip', zip2);
   const r2 = await src.service.restoreBackup('sandbox/backups/bad2.zip');
   assert.equal(r2.ok, false);
   assert.ok(r2.issues.some((i) => i.code === 'dangling_attachment_blob'));
@@ -224,7 +224,7 @@ test('负向：越界路径条目的 ZIP 被拒（Zip Slip）', async () => {
     }
   }
   assert.ok(hits >= 2);
-  await src.fs.writeBytes('sandbox/backups/evil.zip', zipBytes);
+  await src.fs.writeRawBytes('sandbox/backups/evil.zip', zipBytes);
   const before = await snapshotOf(src);
   const result = await src.service.restoreBackup('sandbox/backups/evil.zip');
   assert.equal(result.ok, false);
@@ -238,14 +238,14 @@ test('负向：损坏的 ZIP（截断 / CRC 篡改）被拒', async () => {
   const exported = await src.service.exportBackup();
   const zipBytes = await src.fs.readBytes(exported.zipPath);
 
-  await src.fs.writeBytes('sandbox/backups/truncated.zip', zipBytes.slice(0, zipBytes.length - 8));
+  await src.fs.writeRawBytes('sandbox/backups/truncated.zip', zipBytes.slice(0, zipBytes.length - 8));
   const r1 = await src.service.restoreBackup('sandbox/backups/truncated.zip');
   assert.equal(r1.ok, false);
   assert.ok(r1.issues.some((i) => i.code === 'zip_invalid'));
 
   const flipped = new Uint8Array(zipBytes);
   flipped[40] = flipped[40] ^ 0xff; // manifest 数据区
-  await src.fs.writeBytes('sandbox/backups/crc.zip', flipped);
+  await src.fs.writeRawBytes('sandbox/backups/crc.zip', flipped);
   const r2 = await src.service.restoreBackup('sandbox/backups/crc.zip');
   assert.equal(r2.ok, false);
   assert.ok(r2.issues.some((i) => i.code === 'zip_invalid'));
@@ -262,7 +262,7 @@ test('负向：包内 blob 被替换（CRC 合法但摘要与 manifest 不符）
       ? { name: e.name, data: utf8Encode('伪造图片内容AAAA') } // 等长，绕过大小校验
       : e,
   );
-  await src.fs.writeBytes('sandbox/backups/forged.zip', buildZip(badEntries));
+  await src.fs.writeRawBytes('sandbox/backups/forged.zip', buildZip(badEntries));
   const before = await snapshotOf(src);
   const result = await src.service.restoreBackup('sandbox/backups/forged.zip');
   assert.equal(result.ok, false);
@@ -276,7 +276,7 @@ test('负向：包内缺 blob 文件（manifest 引用但条目缺失）被拒',
   const exported = await src.service.exportBackup();
   const good = readZip(await src.fs.readBytes(exported.zipPath));
   const onlyManifest = good.entries.filter((e) => e.name === MANIFEST_ENTRY);
-  await src.fs.writeBytes('sandbox/backups/missing.zip', buildZip(onlyManifest));
+  await src.fs.writeRawBytes('sandbox/backups/missing.zip', buildZip(onlyManifest));
   const result = await src.service.restoreBackup('sandbox/backups/missing.zip');
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((i) => i.code === 'blob_precheck_failed'));

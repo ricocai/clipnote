@@ -27,6 +27,9 @@ local.properties
 # tools 本机验证基线产物与依赖
 /tools/node_modules/
 /tools/dist/
+# g7-device-proxy 构建产物（按 oh-sqlite 源码本地编译，见 build.sh）
+/tools/probes/g7-device-proxy/g7proxy.node
+/tools/probes/g7-device-proxy/sqlite3.o
 # 本机工具记忆，不入库
 /.workbuddy/
 # 设计文档导出产物：由 md 脚本生成，禁止手改入库（评审决议 §9）

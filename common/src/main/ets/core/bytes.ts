@@ -146,6 +146,19 @@ export function toHex(bytes: Uint8Array): string {
   return out;
 }
 
+/** 按长度+逐字节比较（避免前缀误判） */
+export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i: number = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * UTF-8 编码（纯函数）。
  * 字节宽度口径与 `utf8ByteLength` 完全一致（含孤立代理项 → U+FFFD），

@@ -80,6 +80,26 @@ export class BlobCas {
     return { sha256: sha, relativePath, size, deduped: false };
   }
 
+  /**
+   * 写入二进制附件（图片字节）。与 put() 同一内容寻址语义：
+   * 摘要对原始字节计算，命中已有同摘要文件时不重复写入（去重）。
+   * mime 由调用方登记进 blob 记录（BlobRepository），本层只负责字节与路径。
+   */
+  async putBytes(bytes: Uint8Array): Promise<BlobPutResult> {
+    const sha: string = await this.hasher.sha256HexBytes(bytes);
+    const relativePath: string = blobRelativePath(sha);
+    const absolute: string = this.absolute(relativePath);
+    const size: number = bytes.length;
+
+    if (await this.exists(sha)) {
+      return { sha256: sha, relativePath, size, deduped: true };
+    }
+
+    await this.writer.writeBytes(absolute, bytes);
+    this.logger.log(LogLevel.INFO, 'blob_put_bytes', { sha256: sha, size });
+    return { sha256: sha, relativePath, size, deduped: false };
+  }
+
   async exists(sha: string): Promise<boolean> {
     if (!isSha256Hex(sha)) {
       return false;
@@ -89,6 +109,11 @@ export class BlobCas {
 
   async read(sha: string): Promise<string> {
     return this.fs.readText(this.absolute(blobRelativePath(sha)));
+  }
+
+  /** 读取二进制附件字节（图片渲染/导出用） */
+  async readBytes(sha: string): Promise<Uint8Array> {
+    return this.fs.readBytes(this.absolute(blobRelativePath(sha)));
   }
 
   /**

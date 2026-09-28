@@ -9,7 +9,7 @@
  */
 
 import { IRandom, IFileStore, LogLevel, ILogger } from './ports';
-import { toHex } from './bytes';
+import { bytesEqual, toHex } from './bytes';
 
 /** 临时文件后缀；恢复扫描必须能识别并清理（设计 §4.2 第 2 条） */
 export const TEMP_SUFFIX_MARKER: string = '.tmp-';
@@ -80,8 +80,9 @@ export class AtomicWriter {
   }
 
   /**
-   * 原子写入二进制（备份 ZIP 等）。协议与 `write` 完全相同：
-   * 临时写入 → fsync → 回读校验 → 同文件系统改名 → fsync 目录。
+   * 原子写入二进制（图片等附件字节）。与 write() 完全同一协议：
+   * 临时写入 → fsync → 回读字节校验 → 同 FS 原子改名 → fsync 目录。
+   * 设计 §4.2 的写入顺序对二进制同样成立 —— 文件先落地、引用后提交。
    */
   async writeBytes(path: string, data: Uint8Array, options?: AtomicWriteOptions): Promise<void> {
     const verify: boolean = options === undefined || options.verify !== false;
@@ -92,7 +93,7 @@ export class AtomicWriter {
     const tempPath: string = `${path}${TEMP_SUFFIX_MARKER}${nonce}`;
 
     try {
-      await this.fs.writeBytes(tempPath, data);
+      await this.fs.writeRawBytes(tempPath, data);
       await this.fs.sync(tempPath);
       if (verify) {
         const actual: Uint8Array = await this.fs.readBytes(tempPath);
@@ -120,16 +121,4 @@ export class AtomicWriter {
       throw err;
     }
   }
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  for (let i: number = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) {
-      return false;
-    }
-  }
-  return true;
 }

@@ -51,6 +51,9 @@ export class NodeHasher implements IHasher {
   async sha256Hex(data: string): Promise<string> {
     return crypto.createHash('sha256').update(Buffer.from(data, 'utf8')).digest('hex');
   }
+  async sha256HexBytes(data: Uint8Array): Promise<string> {
+    return crypto.createHash('sha256').update(Buffer.from(data)).digest('hex');
+  }
 }
 
 export interface LogRecord {
@@ -109,15 +112,14 @@ export class NodeFileStore implements IFileStore {
   async writeRaw(p: string, data: string): Promise<void> {
     fs.writeFileSync(p, data, { encoding: 'utf8' });
   }
+  async writeRawBytes(p: string, data: Uint8Array): Promise<void> {
+    fs.writeFileSync(p, Buffer.from(data));
+  }
   async readText(p: string): Promise<string> {
     return fs.readFileSync(p, 'utf8');
   }
-  async writeBytes(p: string, data: Uint8Array): Promise<void> {
-    fs.writeFileSync(p, Buffer.from(data.buffer, data.byteOffset, data.byteLength));
-  }
   async readBytes(p: string): Promise<Uint8Array> {
-    const buf: Buffer = fs.readFileSync(p);
-    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    return new Uint8Array(fs.readFileSync(p));
   }
   async rename(fromPath: string, toPath: string): Promise<void> {
     fs.renameSync(fromPath, toPath);
@@ -150,10 +152,13 @@ export class NodeFileStore implements IFileStore {
  * `failNextWrite` 用于验证"临时文件已写但改名未执行"这一崩溃点。
  */
 export class MemoryFileStore implements IFileStore {
-  private readonly files: Map<string, string | Uint8Array> = new Map<string, string | Uint8Array>();
+  private readonly files: Map<string, string> = new Map<string, string>();
+  private readonly byteFiles: Map<string, Uint8Array> = new Map<string, Uint8Array>();
   private readonly dirs: Set<string> = new Set<string>();
   /** 注入的写失败次数（模拟磁盘满） */
   public failNextWrite: number = 0;
+  /** 注入的读字节失败次数（模拟分享 URI 授权被撤销/读取中断，S2-3 负向用例） */
+  public failNextReadBytes: number = 0;
   /** 记录所有写操作路径，用于断言原子写入顺序 */
   readonly writeLog: string[] = [];
   readonly renameLog: string[] = [];
@@ -162,13 +167,15 @@ export class MemoryFileStore implements IFileStore {
     this.ensureDir(p);
   }
   async exists(p: string): Promise<boolean> {
-    return this.files.has(p) || this.dirs.has(p);
+    return this.files.has(p) || this.byteFiles.has(p) || this.dirs.has(p);
   }
   async stat(p: string): Promise<FileStat | undefined> {
     if (this.files.has(p)) {
-      const v = this.files.get(p) as string | Uint8Array;
-      const size: number = typeof v === 'string' ? Buffer.byteLength(v, 'utf8') : v.byteLength;
-      return new NodeFileStat(size, 0, FileKind.FILE);
+      const v = this.files.get(p) as string;
+      return new NodeFileStat(Buffer.byteLength(v, 'utf8'), 0, FileKind.FILE);
+    }
+    if (this.byteFiles.has(p)) {
+      return new NodeFileStat((this.byteFiles.get(p) as Uint8Array).length, 0, FileKind.FILE);
     }
     if (this.dirs.has(p)) {
       return new NodeFileStat(0, 0, FileKind.DIR);
@@ -184,56 +191,66 @@ export class MemoryFileStore implements IFileStore {
     this.files.set(p, data);
     this.ensureDir(p.slice(0, p.lastIndexOf('/')));
   }
-  async readText(p: string): Promise<string> {
-    const v = this.files.get(p);
-    if (v === undefined) {
-      throw new Error(`ENOENT: ${p}`);
-    }
-    if (typeof v !== 'string') {
-      throw new Error(`MemoryFileStore.readText: ${p} holds binary data`);
-    }
-    return v;
-  }
-  async writeBytes(p: string, data: Uint8Array): Promise<void> {
+  async writeRawBytes(p: string, data: Uint8Array): Promise<void> {
     this.writeLog.push(p);
     if (this.failNextWrite > 0) {
       this.failNextWrite--;
       throw new Error('ENOSPC: no space left on device (injected)');
     }
-    this.files.set(p, new Uint8Array(data));
+    this.byteFiles.set(p, data);
     this.ensureDir(p.slice(0, p.lastIndexOf('/')));
   }
-  async readBytes(p: string): Promise<Uint8Array> {
+  async readText(p: string): Promise<string> {
     const v = this.files.get(p);
     if (v === undefined) {
       throw new Error(`ENOENT: ${p}`);
     }
-    if (typeof v === 'string') {
-      const buf: Buffer = Buffer.from(v, 'utf8');
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    return v;
+  }
+  async readBytes(p: string): Promise<Uint8Array> {
+    if (this.failNextReadBytes > 0) {
+      this.failNextReadBytes--;
+      throw new Error('EACCES: permission denied (injected)');
     }
-    return new Uint8Array(v);
+    const v = this.byteFiles.get(p);
+    if (v === undefined) {
+      throw new Error(`ENOENT: ${p}`);
+    }
+    return v;
   }
   async rename(fromPath: string, toPath: string): Promise<void> {
     this.renameLog.push(`${fromPath}->${toPath}`);
-    const v = this.files.get(fromPath);
-    if (v === undefined) {
-      throw new Error(`ENOENT: ${fromPath}`);
+    if (this.files.has(fromPath)) {
+      const v = this.files.get(fromPath) as string;
+      this.files.delete(fromPath);
+      this.files.set(toPath, v);
+      return;
     }
-    this.files.delete(fromPath);
-    this.files.set(toPath, v);
+    if (this.byteFiles.has(fromPath)) {
+      const b = this.byteFiles.get(fromPath) as Uint8Array;
+      this.byteFiles.delete(fromPath);
+      this.byteFiles.set(toPath, b);
+      return;
+    }
+    throw new Error(`ENOENT: ${fromPath}`);
   }
   async sync(): Promise<void> {
     /* no-op */
   }
   async remove(p: string): Promise<void> {
     this.files.delete(p);
+    this.byteFiles.delete(p);
     this.dirs.delete(p);
   }
   async list(dir: string): Promise<string[]> {
     const prefix = dir.endsWith('/') ? dir : `${dir}/`;
     const out = new Set<string>();
     this.files.forEach((_v, k) => {
+      if (k.startsWith(prefix)) {
+        out.add(k.slice(prefix.length).split('/')[0]);
+      }
+    });
+    this.byteFiles.forEach((_v, k) => {
       if (k.startsWith(prefix)) {
         out.add(k.slice(prefix.length).split('/')[0]);
       }
@@ -248,6 +265,11 @@ export class MemoryFileStore implements IFileStore {
   /** 直接注入文件（模拟"文件已在盘上但 DB 无引用"） */
   seed(p: string, content: string): void {
     this.files.set(p, content);
+    this.ensureDir(p.slice(0, p.lastIndexOf('/')));
+  }
+  /** 直接注入二进制文件 */
+  seedBytes(p: string, content: Uint8Array): void {
+    this.byteFiles.set(p, content);
     this.ensureDir(p.slice(0, p.lastIndexOf('/')));
   }
 
@@ -268,9 +290,10 @@ export class MemoryFileStore implements IFileStore {
   /** 直接删除文件（模拟"DB 有引用但文件丢失"） */
   drop(p: string): void {
     this.files.delete(p);
+    this.byteFiles.delete(p);
   }
   allPaths(): string[] {
-    return Array.from(this.files.keys()).sort();
+    return Array.from(new Set([...this.files.keys(), ...this.byteFiles.keys()])).sort();
   }
 }
 
