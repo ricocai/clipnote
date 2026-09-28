@@ -1,86 +1,26 @@
 import { PasteButtonOnClickResult, router } from '@kit.ArkUI';
 import {
-  AppContextHolder,
-  AppDataRuntime,
-  BlobCas,
   CaptureKind,
   CaptureResult,
   ClipEntry,
-  ClipIngestService,
   ClipKind,
   ClipboardItem,
-  CryptoHasher,
-  CryptoRandom,
   DEFAULT_INBOX_CAPACITY,
   ForegroundCheck,
   ForegroundPromptController,
-  HilogLogger,
   INBOX_LIST_LIMIT,
   InboxService,
   Note,
-  SandboxFileStore,
   Sensitivity,
-  SystemClock,
   SystemPasteboardProbe,
   sensitivityReasonLabel,
 } from 'common';
 import { EVENT_FOREGROUND } from '../EntryEvents';
-
-/**
- * 依赖装配（最薄的一层）。
- *
- * 只做实例化与注入，不含任何业务规则 —— 业务规则全部在 common/core 内（由本机用例覆盖）。
- * 这样做的直接收益：UI 这一层（无法在本机自动化验证的部分）尽可能没有可出错的逻辑。
- */
-export class AppServices {
-  private static instance: AppServices | undefined = undefined;
-
-  readonly clock: SystemClock = new SystemClock();
-  readonly logger: HilogLogger = new HilogLogger();
-  readonly random: CryptoRandom = new CryptoRandom();
-  readonly hasher: CryptoHasher = new CryptoHasher();
-  readonly fs: SandboxFileStore = new SandboxFileStore();
-  readonly ingest: ClipIngestService;
-  readonly blobs: BlobCas;
-
-  private inboxSvc: InboxService | undefined = undefined;
-
-  private constructor() {
-    const root: string = AppContextHolder.filesDir();
-    this.ingest = new ClipIngestService({
-      clock: this.clock,
-      hasher: this.hasher,
-      random: this.random,
-      logger: this.logger,
-    });
-    this.blobs = new BlobCas(`${root}/clipnote`, this.fs, this.hasher, this.logger, this.random);
-  }
-
-  static get(): AppServices {
-    if (AppServices.instance === undefined) {
-      AppServices.instance = new AppServices();
-    }
-    return AppServices.instance;
-  }
-
-  /** 收件箱服务：依赖数据层就绪（打开库 → 迁移 → 恢复扫描 → 保留期清理，见 AppDataRuntime） */
-  async inboxService(): Promise<InboxService> {
-    if (this.inboxSvc === undefined) {
-      const rt: AppDataRuntime = await AppDataRuntime.whenReady();
-      this.inboxSvc = new InboxService({
-        ingest: this.ingest,
-        inbox: rt.inbox,
-        notes: rt.notes,
-        clock: this.clock,
-        logger: this.logger,
-      });
-    }
-    return this.inboxSvc;
-  }
-}
+import { AppServices } from '../services/AppServices';
+import { flatPreview, relativeTimeLabel } from '../ui/Format';
 
 // ---------------------------------------------------------------------------
-// 展示模型与映射（纯展示语义，无业务规则）
+// 展示模型与映射（纯展示语义，无业务规则；格式化助手见 ui/Format.ets）
 // ---------------------------------------------------------------------------
 
 /** 收件箱行的展示模型（UI 态与领域模型分离，避免 UI 直接依赖领域字段演化） */
@@ -158,33 +98,12 @@ function sensitivityLabelOf(s: Sensitivity): string {
   return '';
 }
 
-function relativeTimeLabel(capturedAtMs: number): string {
-  const diff: number = Date.now() - capturedAtMs;
-  if (diff < 60 * 1000) {
-    return '刚刚';
-  }
-  if (diff < 60 * 60 * 1000) {
-    return `${Math.floor(diff / 60000)} 分钟前`;
-  }
-  if (diff < 24 * 60 * 60 * 1000) {
-    return `${Math.floor(diff / 3600000)} 小时前`;
-  }
-  if (diff < 7 * 24 * 60 * 60 * 1000) {
-    return `${Math.floor(diff / 86400000)} 天前`;
-  }
-  const d: Date = new Date(capturedAtMs);
-  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
 function toRow(item: ClipboardItem): InboxRow {
-  // 摘要折成单行展示，正文本身不改动
-  const flat: string = item.rawText.split('\n').join(' ');
-  const preview: string = flat.length > 120 ? `${flat.slice(0, 120)}…` : flat;
   return {
     id: item.id,
     icon: kindIcon(item.kind),
     kindLabel: kindLabel(item.kind),
-    preview,
+    preview: flatPreview(item.rawText, 120),
     sensitivity: item.sensitivity,
     sensitivityLabel: sensitivityLabelOf(item.sensitivity),
     timeLabel: relativeTimeLabel(item.capturedAtMs),
@@ -440,7 +359,8 @@ struct Index {
     }
     try {
       const note: Note = await this.inboxSvc.acceptAsNote(id);
-      this.notice = `已存为笔记《${note.title}》。`;
+      // 与笔记页打通（S3-1）：转存结果如实播报，去向给可点的入口而不是让用户猜
+      this.notice = `已存为笔记《${note.title}》，可在「笔记库」查看/编辑。`;
     } catch (err) {
       this.notice = `存为笔记失败：${String(err)}`;
     }
@@ -494,6 +414,13 @@ struct Index {
           .fontSize(24)
           .fontWeight(FontWeight.Bold)
           .layoutWeight(1)
+        Text('笔记库')
+          .fontSize(13)
+          .fontColor('#1F6FEB')
+          .margin({ right: 12 })
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/NoteList' });
+          })
         Text('设置')
           .fontSize(13)
           .fontColor('#8C8C8C')

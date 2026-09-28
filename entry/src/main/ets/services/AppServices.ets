@@ -1,0 +1,88 @@
+import {
+  AppContextHolder,
+  AppDataRuntime,
+  BlobCas,
+  ClipIngestService,
+  CryptoHasher,
+  CryptoRandom,
+  HilogLogger,
+  InboxService,
+  NoteService,
+  SandboxFileStore,
+  SystemClock,
+} from 'common';
+
+/**
+ * 依赖装配（最薄的一层；S3-1 从 Index 页抽出为独立模块，供收件箱页 / 笔记列表页 / 编辑页共用）。
+ *
+ * 只做实例化与注入，不含任何业务规则 —— 业务规则全部在 common/core 内（由本机用例覆盖）。
+ * 这样做的直接收益：UI 这一层（无法在本机自动化验证的部分）尽可能没有可出错的逻辑。
+ *
+ * 注意：笔记附件的 CAS 只有一份 —— AppDataRuntime.blobCas（根 = context.filesDir，
+ * 与启动恢复扫描共用同一实例与同一套路径口径）。不要在 UI 层另建 BlobCas 写附件，
+ * 否则恢复扫描会把"已提交引用"误判为缺失（G5 阻断项）。
+ * 本类保留的 blobs 是 G1 探针期实例（根 = filesDir/clipnote），不承担附件写入路径。
+ */
+export class AppServices {
+  private static instance: AppServices | undefined = undefined;
+
+  readonly clock: SystemClock = new SystemClock();
+  readonly logger: HilogLogger = new HilogLogger();
+  readonly random: CryptoRandom = new CryptoRandom();
+  readonly hasher: CryptoHasher = new CryptoHasher();
+  readonly fs: SandboxFileStore = new SandboxFileStore();
+  readonly ingest: ClipIngestService;
+  readonly blobs: BlobCas;
+
+  private inboxSvc: InboxService | undefined = undefined;
+  private noteSvc: NoteService | undefined = undefined;
+
+  private constructor() {
+    const root: string = AppContextHolder.filesDir();
+    this.ingest = new ClipIngestService({
+      clock: this.clock,
+      hasher: this.hasher,
+      random: this.random,
+      logger: this.logger,
+    });
+    this.blobs = new BlobCas(`${root}/clipnote`, this.fs, this.hasher, this.logger, this.random);
+  }
+
+  static get(): AppServices {
+    if (AppServices.instance === undefined) {
+      AppServices.instance = new AppServices();
+    }
+    return AppServices.instance;
+  }
+
+  /** 收件箱服务：依赖数据层就绪（打开库 → 迁移 → 恢复扫描 → 保留期清理，见 AppDataRuntime） */
+  async inboxService(): Promise<InboxService> {
+    if (this.inboxSvc === undefined) {
+      const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+      this.inboxSvc = new InboxService({
+        ingest: this.ingest,
+        inbox: rt.inbox,
+        notes: rt.notes,
+        clock: this.clock,
+        logger: this.logger,
+      });
+    }
+    return this.inboxSvc;
+  }
+
+  /** 笔记服务（S3-1）：与收件箱服务共用同一数据层运行时与同一附件 CAS */
+  async noteService(): Promise<NoteService> {
+    if (this.noteSvc === undefined) {
+      const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+      this.noteSvc = new NoteService({
+        db: rt.executor,
+        notes: rt.notes,
+        blobs: rt.blobs,
+        blobCas: rt.blobCas,
+        hasher: this.hasher,
+        logger: this.logger,
+      });
+    }
+    return this.noteSvc;
+  }
+}
