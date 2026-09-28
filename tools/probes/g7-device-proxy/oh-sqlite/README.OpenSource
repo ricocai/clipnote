@@ -1,0 +1,11 @@
+[
+    {
+        "Name": "sqlite",
+        "License": "Public Domain",
+        "License File": "LICENSE",
+        "Version Number": "3.40.1",
+        "Owner": "wangbingquan@huawei.com",
+        "Upstream URL": "https://www.sqlite.org/2022/sqlite-amalgamation-3400100.zip",
+        "Description": "SQLite is a C-language library that implements a small, fast, self-contained, high-reliability, full-featured, SQL database engine."
+    }
+]

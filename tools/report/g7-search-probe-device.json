@@ -1,0 +1,1858 @@
+{
+  "generatedAt": "2026-09-28T12:19:52.367Z",
+  "environment": {
+    "node": "v22.22.2",
+    "platform": "darwin",
+    "arch": "arm64",
+    "engine": "OpenHarmony sqlite3.c 3.40.1（g7-device-proxy N-API 插件）",
+    "deviceNote": "设备侧探测（RelationalStore 构建口径）：数据库引擎为 OpenHarmony third_party/sqlite 同版本 amalgamation，按 oh-sqlite/BUILD.gn 主库检索相关 defines 编译（见 g7-device-proxy/build.sh）。能力结论（FTS5/trigram/unicode61 行为）对设备成立；耗时为主机硬件数字，仅用于方案间相对比较，设备闪存绝对值会更慢。语料/查询集/策略与主机侧 g7-search.ts 完全一致，数字直接可比。"
+  },
+  "capabilities": {
+    "sqliteVersion": "3.40.1",
+    "fts5Available": true,
+    "fts5Note": "create virtual table ... using fts5 成功",
+    "trigramTokenizerAvailable": true,
+    "trigramNote": "tokenize='trigram' 创建成功（SQLite ≥ 3.34）",
+    "unicode61Behaviour": "整段 MATCH '鸿蒙笔记应用' → 1 行；MATCH '笔记' → 0 行；MATCH '笔' → 0 行。（unicode61 把连续 CJK 视为**一个 token**，因此只有整段匹配才命中：查\"笔记\"命中 0 行即为证据）"
+  },
+  "compileOptions": [
+    "ATOMIC_INTRINSICS=1",
+    "COMPILER=clang-21.0.0",
+    "DEFAULT_AUTOVACUUM",
+    "DEFAULT_CACHE_SIZE=-2000",
+    "DEFAULT_FILE_FORMAT=4",
+    "DEFAULT_JOURNAL_SIZE_LIMIT=1048576",
+    "DEFAULT_MMAP_SIZE=0",
+    "DEFAULT_PAGE_SIZE=4096",
+    "DEFAULT_PCACHE_INITSZ=20",
+    "DEFAULT_RECURSIVE_TRIGGERS",
+    "DEFAULT_SECTOR_SIZE=4096",
+    "DEFAULT_SYNCHRONOUS=2",
+    "DEFAULT_WAL_AUTOCHECKPOINT=1000",
+    "DEFAULT_WAL_SYNCHRONOUS=2",
+    "DEFAULT_WORKER_THREADS=0",
+    "ENABLE_FTS3",
+    "ENABLE_FTS3_TOKENIZER",
+    "ENABLE_FTS4",
+    "ENABLE_FTS5",
+    "HAVE_ISNAN",
+    "MALLOC_SOFT_LIMIT=1024",
+    "MAX_ATTACHED=10",
+    "MAX_COLUMN=2000",
+    "MAX_COMPOUND_SELECT=500",
+    "MAX_DEFAULT_PAGE_SIZE=8192",
+    "MAX_EXPR_DEPTH=1000",
+    "MAX_FUNCTION_ARG=127",
+    "MAX_LENGTH=1000000000",
+    "MAX_LIKE_PATTERN_LENGTH=50000",
+    "MAX_MMAP_SIZE=0x7fff0000",
+    "MAX_PAGE_COUNT=1073741823",
+    "MAX_PAGE_SIZE=65536",
+    "MAX_SQL_LENGTH=1000000000",
+    "MAX_TRIGGER_DEPTH=1000",
+    "MAX_VARIABLE_NUMBER=32766",
+    "MAX_VDBE_OP=250000000",
+    "MAX_WORKER_THREADS=0",
+    "MUTEX_PTHREADS",
+    "SECURE_DELETE",
+    "SYSTEM_MALLOC",
+    "TEMP_STORE=3",
+    "THREADSAFE=2"
+  ],
+  "corpora": [
+    {
+      "size": 1000,
+      "queryCases": 16,
+      "runsPerQuery": 12,
+      "strategies": [
+        {
+          "name": "s0_like_scan",
+          "description": "LIKE %q% 全表扫描（无索引）。作为召回率基准，也是单字查询的兜底路径。",
+          "buildMs": 0,
+          "dbBytes": 331776,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.19,
+            "p50Ms": 0.188,
+            "p95Ms": 0.23,
+            "maxMs": 0.412
+          },
+          "recall": 1,
+          "precision": 1,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 324,
+              "hitCount": 324,
+              "intersection": 324,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.204
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 324,
+              "hitCount": 324,
+              "intersection": 324,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.202
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 329,
+              "hitCount": 329,
+              "intersection": 329,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.22
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 3,
+              "hitCount": 3,
+              "intersection": 3,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.19
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.141
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 274,
+              "hitCount": 274,
+              "intersection": 274,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.163
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 196,
+              "hitCount": 196,
+              "intersection": 196,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.182
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 244,
+              "hitCount": 244,
+              "intersection": 244,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.206
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 66,
+              "hitCount": 66,
+              "intersection": 66,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.233
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.192
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "证据应用财报",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.189
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "arkts",
+              "truthCount": 256,
+              "hitCount": 256,
+              "intersection": 256,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.162
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "藏，芯",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.186
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "待办降级事务",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.191
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "京内存，",
+              "truthCount": 2,
+              "hitCount": 2,
+              "intersection": 2,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.189
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "利证据产能",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.192
+            }
+          ],
+          "notes": "召回/精确率按定义恒为 1（它就是 ground truth）；其价值在于给出\"只存正文、不做任何索引\"时的扫描成本与体积下限。注意本代理跑在主机 CPU/页缓存上，设备闪存会更慢（见报告结论边界）。"
+        },
+        {
+          "name": "s1_fts5_unicode61",
+          "description": "FTS5 + 默认 unicode61 分词器，直接 MATCH 原始查询串",
+          "buildMs": 5.602,
+          "dbBytes": 593920,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.008,
+            "p50Ms": 0.007,
+            "p95Ms": 0.014,
+            "maxMs": 0.075
+          },
+          "recall": 0.147,
+          "precision": 0.556,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 324,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.013
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 324,
+              "hitCount": 15,
+              "intersection": 15,
+              "recall": 0.046,
+              "precision": 1,
+              "avgMs": 0.014
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 329,
+              "hitCount": 12,
+              "intersection": 12,
+              "recall": 0.036,
+              "precision": 1,
+              "avgMs": 0.009
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 3,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.005
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 274,
+              "hitCount": 9,
+              "intersection": 9,
+              "recall": 0.033,
+              "precision": 1,
+              "avgMs": 0.009
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 196,
+              "hitCount": 7,
+              "intersection": 7,
+              "recall": 0.036,
+              "precision": 1,
+              "avgMs": 0.008
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 244,
+              "hitCount": 9,
+              "intersection": 9,
+              "recall": 0.037,
+              "precision": 1,
+              "avgMs": 0.008
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 66,
+              "hitCount": 9,
+              "intersection": 8,
+              "recall": 0.121,
+              "precision": 0.889,
+              "avgMs": 0.01
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.01
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "证据应用财报",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "arkts",
+              "truthCount": 256,
+              "hitCount": 10,
+              "intersection": 10,
+              "recall": 0.039,
+              "precision": 1,
+              "avgMs": 0.01
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "藏，芯",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "待办降级事务",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "京内存，",
+              "truthCount": 2,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "利证据产能",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            }
+          ],
+          "notes": "关键结论：unicode61 把连续 CJK 视为单一 token，中文子串查询无法命中，因此该策略对中文基本不可用（召回率见 perQuery 中\"双字/三字/四字\"用例）。"
+        },
+        {
+          "name": "s2_fts5_unicode61_gram_preindex",
+          "description": "FTS5 + unicode61，写入前把正文切成 2-gram（空格分隔）后再入索引，查询同样切 gram 后 MATCH AND",
+          "buildMs": 13.464,
+          "dbBytes": 1003520,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.056,
+            "p50Ms": 0.015,
+            "p95Ms": 0.158,
+            "maxMs": 0.24
+          },
+          "recall": 0.875,
+          "precision": 0.762,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 324,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.014
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 324,
+              "hitCount": 324,
+              "intersection": 324,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.114
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 329,
+              "hitCount": 329,
+              "intersection": 329,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.11
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 3,
+              "hitCount": 3,
+              "intersection": 3,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.013
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.01
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 274,
+              "hitCount": 274,
+              "intersection": 274,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.134
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 196,
+              "hitCount": 196,
+              "intersection": 196,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.082
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 244,
+              "hitCount": 244,
+              "intersection": 244,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.079
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 66,
+              "hitCount": 349,
+              "intersection": 66,
+              "recall": 1,
+              "precision": 0.189,
+              "avgMs": 0.114
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.009
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "证据应用财报",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.014
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "arkts",
+              "truthCount": 256,
+              "hitCount": 384,
+              "intersection": 256,
+              "recall": 1,
+              "precision": 0.667,
+              "avgMs": 0.166
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "藏，芯",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.008
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "待办降级事务",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.016
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "京内存，",
+              "truthCount": 2,
+              "hitCount": 6,
+              "intersection": 2,
+              "recall": 1,
+              "precision": 0.333,
+              "avgMs": 0.01
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "利证据产能",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.011
+            }
+          ],
+          "notes": "这是\"应用层生成分词后索引\"方案的可落地形态；代价是索引膨胀（见 dbBytes 对比）。"
+        },
+        {
+          "name": "s3_fts5_trigram",
+          "description": "FTS5 + tokenize='trigram'（SQLite 3.34+），原生支持任意子串匹配（含中文）",
+          "buildMs": 12.72,
+          "dbBytes": 1142784,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.032,
+            "p50Ms": 0.011,
+            "p95Ms": 0.107,
+            "maxMs": 0.159
+          },
+          "recall": 0.813,
+          "precision": 0.813,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 324,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.004
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 324,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 329,
+              "hitCount": 329,
+              "intersection": 329,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.113
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 3,
+              "hitCount": 3,
+              "intersection": 3,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.009
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.011
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 274,
+              "hitCount": 274,
+              "intersection": 274,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.104
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 196,
+              "hitCount": 196,
+              "intersection": 196,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.078
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 244,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 66,
+              "hitCount": 66,
+              "intersection": 66,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.026
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.006
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "证据应用财报",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.016
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "arkts",
+              "truthCount": 256,
+              "hitCount": 256,
+              "intersection": 256,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.108
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "藏，芯",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.007
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "待办降级事务",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.012
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "京内存，",
+              "truthCount": 2,
+              "hitCount": 2,
+              "intersection": 2,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.01
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "利证据产能",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.011
+            }
+          ],
+          "notes": "trigram 是**最省事**的中文子串方案（无需应用层切词、无需维护 gram 表），但要求查询长度 ≥3 字符；单字/双字查询需回退到别的路径（见 perQuery）。"
+        },
+        {
+          "name": "s4_plain_inverted_gram",
+          "description": "普通表 gram(term, note_id) + 索引，查询按 gram 交集（无 FTS5 时的官方降级路径）",
+          "buildMs": 89.497,
+          "dbBytes": 4059136,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.27,
+            "p50Ms": 0.192,
+            "p95Ms": 0.689,
+            "maxMs": 0.732
+          },
+          "recall": 1,
+          "precision": 0.887,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 324,
+              "hitCount": 324,
+              "intersection": 324,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.212
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 324,
+              "hitCount": 324,
+              "intersection": 324,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.131
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 329,
+              "hitCount": 329,
+              "intersection": 329,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.221
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 3,
+              "hitCount": 3,
+              "intersection": 3,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.164
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.592
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 274,
+              "hitCount": 274,
+              "intersection": 274,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.695
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 196,
+              "hitCount": 196,
+              "intersection": 196,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.413
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 244,
+              "hitCount": 244,
+              "intersection": 244,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.102
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 66,
+              "hitCount": 349,
+              "intersection": 66,
+              "recall": 1,
+              "precision": 0.189,
+              "avgMs": 0.151
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.014
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "证据应用财报",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.243
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "arkts",
+              "truthCount": 256,
+              "hitCount": 384,
+              "intersection": 256,
+              "recall": 1,
+              "precision": 0.667,
+              "avgMs": 0.679
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "藏，芯",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.187
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "待办降级事务",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.241
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "京内存，",
+              "truthCount": 2,
+              "hitCount": 6,
+              "intersection": 2,
+              "recall": 1,
+              "precision": 0.333,
+              "avgMs": 0.1
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "利证据产能",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.178
+            }
+          ],
+          "notes": "设计 §4.7 点①给出的降级方案。注意：gram 表是**独立存储**，膨胀明显；单字查询无 gram 可用，必须回退到受限扫描（本探测把该回退一并计入）。"
+        }
+      ]
+    },
+    {
+      "size": 10000,
+      "queryCases": 16,
+      "runsPerQuery": 12,
+      "strategies": [
+        {
+          "name": "s0_like_scan",
+          "description": "LIKE %q% 全表扫描（无索引）。作为召回率基准，也是单字查询的兜底路径。",
+          "buildMs": 0,
+          "dbBytes": 3137536,
+          "latency": {
+            "runs": 192,
+            "meanMs": 2.185,
+            "p50Ms": 2.186,
+            "p95Ms": 2.705,
+            "maxMs": 4.264
+          },
+          "recall": 1,
+          "precision": 1,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 3485,
+              "hitCount": 3485,
+              "intersection": 3485,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.428
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 3485,
+              "hitCount": 3485,
+              "intersection": 3485,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.399
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 3480,
+              "hitCount": 3480,
+              "intersection": 3480,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.476
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 32,
+              "hitCount": 32,
+              "intersection": 32,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.215
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.706
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 2734,
+              "hitCount": 2734,
+              "intersection": 2734,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.94
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 1820,
+              "hitCount": 1820,
+              "intersection": 1820,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.008
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 2378,
+              "hitCount": 2378,
+              "intersection": 2378,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.328
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 639,
+              "hitCount": 639,
+              "intersection": 639,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.869
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.161
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "办api音色",
+              "truthCount": 4,
+              "hitCount": 4,
+              "intersection": 4,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.192
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "毛利检索验",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.207
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "25，",
+              "truthCount": 273,
+              "hitCount": 273,
+              "intersection": 273,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.859
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "024订单队",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.764
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "应用财报",
+              "truthCount": 33,
+              "hitCount": 33,
+              "intersection": 33,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.211
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "深圳解析芯",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.188
+            }
+          ],
+          "notes": "召回/精确率按定义恒为 1（它就是 ground truth）；其价值在于给出\"只存正文、不做任何索引\"时的扫描成本与体积下限。注意本代理跑在主机 CPU/页缓存上，设备闪存会更慢（见报告结论边界）。"
+        },
+        {
+          "name": "s1_fts5_unicode61",
+          "description": "FTS5 + 默认 unicode61 分词器，直接 MATCH 原始查询串",
+          "buildMs": 49.107,
+          "dbBytes": 5373952,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.024,
+            "p50Ms": 0.007,
+            "p95Ms": 0.066,
+            "maxMs": 0.195
+          },
+          "recall": 0.155,
+          "precision": 0.614,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 3485,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.009
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 3485,
+              "hitCount": 152,
+              "intersection": 152,
+              "recall": 0.044,
+              "precision": 1,
+              "avgMs": 0.066
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 3480,
+              "hitCount": 154,
+              "intersection": 154,
+              "recall": 0.044,
+              "precision": 1,
+              "avgMs": 0.072
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 32,
+              "hitCount": 2,
+              "intersection": 2,
+              "recall": 0.063,
+              "precision": 1,
+              "avgMs": 0.007
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.009
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 2734,
+              "hitCount": 88,
+              "intersection": 88,
+              "recall": 0.032,
+              "precision": 1,
+              "avgMs": 0.039
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 1820,
+              "hitCount": 72,
+              "intersection": 72,
+              "recall": 0.04,
+              "precision": 1,
+              "avgMs": 0.034
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 2378,
+              "hitCount": 88,
+              "intersection": 88,
+              "recall": 0.037,
+              "precision": 1,
+              "avgMs": 0.039
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 639,
+              "hitCount": 153,
+              "intersection": 125,
+              "recall": 0.196,
+              "precision": 0.817,
+              "avgMs": 0.063
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.006
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "办api音色",
+              "truthCount": 4,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.007
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "毛利检索验",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.006
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "25，",
+              "truthCount": 273,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.007
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "024订单队",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "应用财报",
+              "truthCount": 33,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 0.03,
+              "precision": 1,
+              "avgMs": 0.007
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "深圳解析芯",
+              "truthCount": 1,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.005
+            }
+          ],
+          "notes": "关键结论：unicode61 把连续 CJK 视为单一 token，中文子串查询无法命中，因此该策略对中文基本不可用（召回率见 perQuery 中\"双字/三字/四字\"用例）。"
+        },
+        {
+          "name": "s2_fts5_unicode61_gram_preindex",
+          "description": "FTS5 + unicode61，写入前把正文切成 2-gram（空格分隔）后再入索引，查询同样切 gram 后 MATCH AND",
+          "buildMs": 111.841,
+          "dbBytes": 9379840,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.739,
+            "p50Ms": 0.109,
+            "p95Ms": 1.896,
+            "maxMs": 2.11
+          },
+          "recall": 0.875,
+          "precision": 0.688,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 3485,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.012
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 3485,
+              "hitCount": 3485,
+              "intersection": 3485,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.721
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 3480,
+              "hitCount": 3480,
+              "intersection": 3480,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.777
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 32,
+              "hitCount": 32,
+              "intersection": 32,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.076
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.027
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 2734,
+              "hitCount": 2734,
+              "intersection": 2734,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.821
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 1820,
+              "hitCount": 1819,
+              "intersection": 1819,
+              "recall": 0.999,
+              "precision": 1,
+              "avgMs": 1.233
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 2378,
+              "hitCount": 2378,
+              "intersection": 2378,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.274
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 639,
+              "hitCount": 3444,
+              "intersection": 639,
+              "recall": 1,
+              "precision": 0.186,
+              "avgMs": 1.68
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.024
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "办api音色",
+              "truthCount": 4,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0.024
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "毛利检索验",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.061
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "25，",
+              "truthCount": 273,
+              "hitCount": 3473,
+              "intersection": 273,
+              "recall": 1,
+              "precision": 0.079,
+              "avgMs": 1.838
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "024订单队",
+              "truthCount": 1,
+              "hitCount": 4,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 0.25,
+              "avgMs": 0.122
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "应用财报",
+              "truthCount": 33,
+              "hitCount": 33,
+              "intersection": 33,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.074
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "深圳解析芯",
+              "truthCount": 1,
+              "hitCount": 2,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 0.5,
+              "avgMs": 0.063
+            }
+          ],
+          "notes": "这是\"应用层生成分词后索引\"方案的可落地形态；代价是索引膨胀（见 dbBytes 对比）。"
+        },
+        {
+          "name": "s3_fts5_trigram",
+          "description": "FTS5 + tokenize='trigram'（SQLite 3.34+），原生支持任意子串匹配（含中文）",
+          "buildMs": 150.749,
+          "dbBytes": 9084928,
+          "latency": {
+            "runs": 192,
+            "meanMs": 0.275,
+            "p50Ms": 0.023,
+            "p95Ms": 1.401,
+            "maxMs": 1.665
+          },
+          "recall": 0.812,
+          "precision": 0.813,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 3485,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 3485,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 3480,
+              "hitCount": 3480,
+              "intersection": 3480,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.447
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 32,
+              "hitCount": 32,
+              "intersection": 32,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.026
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.019
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 2734,
+              "hitCount": 2734,
+              "intersection": 2734,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.347
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 1820,
+              "hitCount": 1819,
+              "intersection": 1819,
+              "recall": 0.999,
+              "precision": 1,
+              "avgMs": 1.049
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 2378,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 0,
+              "precision": 0,
+              "avgMs": 0
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 639,
+              "hitCount": 639,
+              "intersection": 639,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.251
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.009
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "办api音色",
+              "truthCount": 4,
+              "hitCount": 4,
+              "intersection": 4,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.045
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "毛利检索验",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.018
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "25，",
+              "truthCount": 273,
+              "hitCount": 273,
+              "intersection": 273,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.109
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "024订单队",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.03
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "应用财报",
+              "truthCount": 33,
+              "hitCount": 33,
+              "intersection": 33,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.028
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "深圳解析芯",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.018
+            }
+          ],
+          "notes": "trigram 是**最省事**的中文子串方案（无需应用层切词、无需维护 gram 表），但要求查询长度 ≥3 字符；单字/双字查询需回退到别的路径（见 perQuery）。"
+        },
+        {
+          "name": "s4_plain_inverted_gram",
+          "description": "普通表 gram(term, note_id) + 索引，查询按 gram 交集（无 FTS5 时的官方降级路径）",
+          "buildMs": 1675.91,
+          "dbBytes": 41766912,
+          "latency": {
+            "runs": 192,
+            "meanMs": 2.529,
+            "p50Ms": 1.871,
+            "p95Ms": 6.751,
+            "maxMs": 7.516
+          },
+          "recall": 1,
+          "precision": 0.813,
+          "perQuery": [
+            {
+              "label": "单字（CJK 1 码点）",
+              "query": "笔",
+              "truthCount": 3485,
+              "hitCount": 3485,
+              "intersection": 3485,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.39
+            },
+            {
+              "label": "双字",
+              "query": "笔记",
+              "truthCount": 3485,
+              "hitCount": 3485,
+              "intersection": 3485,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.249
+            },
+            {
+              "label": "三字",
+              "query": "剪贴板",
+              "truthCount": 3480,
+              "hitCount": 3480,
+              "intersection": 3480,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.103
+            },
+            {
+              "label": "四字短语",
+              "query": "鸿蒙笔记",
+              "truthCount": 32,
+              "hitCount": 32,
+              "intersection": 32,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.646
+            },
+            {
+              "label": "中英混合",
+              "query": "arkts 性能",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 5.876
+            },
+            {
+              "label": "纯英文",
+              "query": "sqlite",
+              "truthCount": 2734,
+              "hitCount": 2734,
+              "intersection": 2734,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 6.956
+            },
+            {
+              "label": "纯数字",
+              "query": "2026",
+              "truthCount": 1820,
+              "hitCount": 1819,
+              "intersection": 1819,
+              "recall": 0.999,
+              "precision": 1,
+              "avgMs": 3.73
+            },
+            {
+              "label": "emoji",
+              "query": "🙂",
+              "truthCount": 2378,
+              "hitCount": 2378,
+              "intersection": 2378,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.859
+            },
+            {
+              "label": "含标点",
+              "query": "，财报",
+              "truthCount": 639,
+              "hitCount": 3444,
+              "intersection": 639,
+              "recall": 1,
+              "precision": 0.186,
+              "avgMs": 1.281
+            },
+            {
+              "label": "不存在的词（负例）",
+              "query": "量子纠缠退火",
+              "truthCount": 0,
+              "hitCount": 0,
+              "intersection": 0,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 0.014
+            },
+            {
+              "label": "语料抽样片段 1",
+              "query": "办api音色",
+              "truthCount": 4,
+              "hitCount": 4,
+              "intersection": 4,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 2.138
+            },
+            {
+              "label": "语料抽样片段 2",
+              "query": "毛利检索验",
+              "truthCount": 1,
+              "hitCount": 1,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.621
+            },
+            {
+              "label": "语料抽样片段 3",
+              "query": "25，",
+              "truthCount": 273,
+              "hitCount": 3473,
+              "intersection": 273,
+              "recall": 1,
+              "precision": 0.079,
+              "avgMs": 3.237
+            },
+            {
+              "label": "语料抽样片段 4",
+              "query": "024订单队",
+              "truthCount": 1,
+              "hitCount": 4,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 0.25,
+              "avgMs": 4.104
+            },
+            {
+              "label": "语料抽样片段 5",
+              "query": "应用财报",
+              "truthCount": 33,
+              "hitCount": 33,
+              "intersection": 33,
+              "recall": 1,
+              "precision": 1,
+              "avgMs": 1.632
+            },
+            {
+              "label": "语料抽样片段 6",
+              "query": "深圳解析芯",
+              "truthCount": 1,
+              "hitCount": 2,
+              "intersection": 1,
+              "recall": 1,
+              "precision": 0.5,
+              "avgMs": 1.632
+            }
+          ],
+          "notes": "设计 §4.7 点①给出的降级方案。注意：gram 表是**独立存储**，膨胀明显；单字查询无 gram 可用，必须回退到受限扫描（本探测把该回退一并计入）。"
+        }
+      ]
+    }
+  ]
+}
