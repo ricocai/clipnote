@@ -1,0 +1,22 @@
+{
+  "name": "clipnote-tools",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ClipNote 本机验证基线：领域内核单测 + 关键能力探测（G7）。不参与鸿蒙构建，产物在 dist/。",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --experimental-sqlite --test \"dist/tools/test/*.test.js\"",
+    "probe:g7": "tsc -p tsconfig.json && node --experimental-sqlite dist/tools/probes/g7-search.js"
+  },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

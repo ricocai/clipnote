@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // CommonJS + node 解析：允许无扩展名的相对导入（与 ArkTS 源码写法一致，避免内核为两套构建各写一遍）
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noImplicitAny": true,
+    // 关闭该 flag：ArkTS 无对应检查，保持内核源码为"两边都合法"的最低公共分母
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "sourceMap": true,
+    "rootDir": "..",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": [
+    "./test/**/*.ts",
+    "./probes/**/*.ts",
+    "../common/src/main/ets/core/**/*.ts"
+  ]
+}
