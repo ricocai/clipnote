@@ -9,10 +9,12 @@ import {
 } from 'common';
 import {
   AvSessionControls,
+  DEFAULT_TTS_SETTINGS,
   PlaybackState,
   SpeechPlaybackController,
   SpeechPlan,
   SpeechPlanItem,
+  TtsVoiceSettings,
   planSpeech,
 } from 'speech';
 import { AppServices } from '../services/AppServices';
@@ -28,6 +30,9 @@ import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
  * 播控：AvSessionControls（通知栏/锁屏指令、焦点中断 → interrupt 段边界暂停）。
  * 进度口径：TTS-0 段播完按整段字符数回报，段落级高亮够用；段内进度属
  * playType=0 PCM 真机项（G4 §5-5），本页不实现。
+ * 音色/语速（S5-4）：控制条内切换入口，直接接引擎层 updateSettings（收敛 →
+ * preferences 持久化 → 段落边界生效，不新造状态机）；进页 capability() 预探测
+ * （F-5 不可用置灰 + 文案 / F-6 启动即异步初始化预热），探测完成前一律置灰。
  *
  * 渲染链路（一次解析，块模型复用）：
  *   笔记原文 → ArkWeb 内 markdown-it（reader.html 可信页）→ 桥接 Schema JSON
@@ -51,6 +56,11 @@ import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
 function blockedResponse(): webview.WebResourceResponse {
   return new webview.WebResourceResponse('text/plain', 'utf-8', 404, 'Not Found', [], new Uint8Array(0));
 }
+
+/** 语速档位（SPEED_MIN~SPEED_MAX 域内常用值；离散档位比滑杆更不易误触，S5-4） */
+const SPEED_OPTIONS: number[] = [0.75, 1, 1.25, 1.5, 2];
+/** 可选音色：官方口径仅 person=0（聆小珊）确认（G4 探测 E2/E6），多音色枚举属 TTS-2 真机项 */
+const VOICE_OPTIONS: { person: number; label: string }[] = [{ person: 0, label: '聆小珊' }];
 
 @Entry
 @Component
@@ -81,6 +91,13 @@ struct NoteRead {
   @State speechIndex: number = -1;
   @State speechNotice: string = '';
 
+  // ---- 朗读音色/语速（S5-4） ----
+  /** TTS 可用性预探测结果（F-5/F-6）；探测完成前一律按不可用置灰（fail-safe） */
+  @State ttsAvailable: boolean = false;
+  @State ttsUnavailableReason: string = '';
+  @State voicePerson: number = DEFAULT_TTS_SETTINGS.person;
+  @State voiceSpeed: number = DEFAULT_TTS_SETTINGS.speed;
+
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, string> | undefined;
     if (params !== undefined && params !== null) {
@@ -91,6 +108,40 @@ struct NoteRead {
     }
     this.loadNote();
     this.attachAvSession();
+    void this.probeTts();
+  }
+
+  /**
+   * TTS 可用性预探测（S5-4，F-5/F-6 口径）：进页即 capability()——探测同时完成
+   * 「启动即异步初始化」预热（首声不再含建引擎开销）；不可用 → 控制条置灰 + 文案，
+   * 可用 → 回读持久化音色/语速作控件初值（默认值沿用引擎层默认）。
+   */
+  private async probeTts(): Promise<void> {
+    try {
+      const engine = this.svc.speechEngine();
+      const cap = await engine.capability();
+      if (!cap.available) {
+        this.ttsUnavailableReason = cap.reason ?? '系统 TTS 不可用';
+        return;
+      }
+      this.ttsAvailable = true;
+      const saved: TtsVoiceSettings = await engine.updateSettings({});
+      this.voicePerson = saved.person;
+      this.voiceSpeed = saved.speed;
+    } catch (err) {
+      this.ttsUnavailableReason = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * 音色/语速切换（S5-4）：直接接引擎层 updateSettings——收敛 → preferences 持久化 →
+   * 生效；播放中不中断在播段，新参数按段落边界生效（引擎段间回 idle 时重建，S5-1 语义），
+   * 不新造状态机。控件回显以引擎返回的收敛值为准。
+   */
+  private async applyVoiceSettings(patch: { person?: number; speed?: number }): Promise<void> {
+    const saved: TtsVoiceSettings = await this.svc.speechEngine().updateSettings(patch);
+    this.voicePerson = saved.person;
+    this.voiceSpeed = saved.speed;
   }
 
   aboutToDisappear(): void {
@@ -105,6 +156,9 @@ struct NoteRead {
       getContext(this) as common.Context,
       {
         play: (): void => {
+          if (!this.ttsAvailable || !this.canSpeak()) {
+            return; // 引擎不可用/无朗读计划时不触发（S5-4 禁用口径；play 对空计划会 throw）
+          }
           this.speechNotice = '';
           void this.ensurePlayback().play();
         },
@@ -316,54 +370,75 @@ struct NoteRead {
           .width('100%')
       }
 
-      // ---- 朗读控制条（S5-2；调度在 speech 内核，本页仅按钮与状态） ----
+      // ---- 朗读控制条（S5-2 播控 + S5-4 音色/语速入口；调度在 speech 内核，本页仅按钮与状态） ----
       if (this.canSpeak()) {
         Column({ space: 4 }) {
           Row({ space: 12 }) {
             if (this.playState === 'playing') {
               Text('暂停')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return;
+                  }
                   void this.playback?.pause();
                 })
               Text('停止')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return;
+                  }
                   void this.playback?.stop();
                 })
               Text('上一段')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return;
+                  }
                   void this.playback?.prev();
                 })
               Text('下一段')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return;
+                  }
                   void this.playback?.next();
                 })
             } else if (this.playState === 'paused') {
               Text('继续')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return;
+                  }
                   this.speechNotice = '';
                   void this.playback?.play();
                 })
               Text('停止')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return;
+                  }
                   void this.playback?.stop();
                 })
             } else {
               Text('朗读')
                 .fontSize(15)
-                .fontColor('#1F6FEB')
+                .fontColor(this.ttsAvailable ? '#1F6FEB' : '#B0B0B0')
                 .onClick(() => {
+                  if (!this.ttsAvailable) {
+                    return; // 探测失败不允许触发（F-5 置灰口径），杜绝 failed 态反复重试
+                  }
                   this.speechNotice = '';
                   void this.ensurePlayback().play();
                 })
@@ -371,6 +446,60 @@ struct NoteRead {
           }
           .width('100%')
 
+          // ---- 音色切换（S5-4）：接引擎层 updateSettings，偏好持久化，段落边界生效 ----
+          Row({ space: 8 }) {
+            Text('音色')
+              .fontSize(13)
+              .fontColor('#8C8C8C')
+            ForEach(VOICE_OPTIONS, (voice: { person: number; label: string }) => {
+              Text(voice.label)
+                .fontSize(13)
+                .fontColor(this.voicePerson === voice.person
+                  ? '#FFFFFF'
+                  : (this.ttsAvailable ? '#1F6FEB' : '#B0B0B0'))
+                .backgroundColor(this.voicePerson === voice.person ? '#1F6FEB' : '#F0F0F0')
+                .borderRadius(6)
+                .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                .onClick(() => {
+                  if (this.ttsAvailable) {
+                    void this.applyVoiceSettings({ person: voice.person });
+                  }
+                })
+            }, (voice: { person: number; label: string }) => `voice-${voice.person}`)
+          }
+          .width('100%')
+
+          // ---- 语速切换（S5-4）：档位在 SPEED_MIN~SPEED_MAX 合法域内，越界由引擎层收敛 ----
+          Row({ space: 8 }) {
+            Text('语速')
+              .fontSize(13)
+              .fontColor('#8C8C8C')
+            ForEach(SPEED_OPTIONS, (speed: number) => {
+              Text(`${speed}x`)
+                .fontSize(13)
+                .fontColor(this.voiceSpeed === speed
+                  ? '#FFFFFF'
+                  : (this.ttsAvailable ? '#1F6FEB' : '#B0B0B0'))
+                .backgroundColor(this.voiceSpeed === speed ? '#1F6FEB' : '#F0F0F0')
+                .borderRadius(6)
+                .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                .onClick(() => {
+                  if (this.ttsAvailable) {
+                    void this.applyVoiceSettings({ speed: speed });
+                  }
+                })
+            }, (speed: number) => `speed-${speed}`)
+          }
+          .width('100%')
+
+          if (!this.ttsAvailable) {
+            Text(this.ttsUnavailableReason.length > 0
+              ? `朗读不可用：${this.ttsUnavailableReason}`
+              : '朗读引擎检测中…')
+              .fontSize(12)
+              .fontColor('#D4380D')
+              .width('100%')
+          }
           if (this.playState === 'playing' || this.playState === 'paused') {
             Text(`朗读中 ${this.speechIndex + 1}/${(this.plan as SpeechPlan).items.length}`)
               .fontSize(12)
