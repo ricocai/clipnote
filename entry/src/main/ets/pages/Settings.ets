@@ -41,6 +41,9 @@ struct Settings {
   /** 最近导出记录（S4-2；只读展示，元数据无正文） */
   @State exportLines: string[] = [];
   @State exporting: boolean = false;
+  /** 备份/恢复入口（WHY-131 条件 A）UI 态 */
+  @State backupBusy: boolean = false;
+  @State restoring: boolean = false;
   /** MCP 服务（S6-7）UI 态 */
   @State mcpEnabled: boolean = false;
   @State mcpRunning: boolean = false;
@@ -93,6 +96,60 @@ struct Settings {
     } finally {
       this.exporting = false;
     }
+  }
+
+  /**
+   * 可恢复备份（WHY-131 条件 A；设计 §4.2）：打包 → 系统分享面板交接。
+   * 面板没拉起不抹掉备份事实（包在沙箱 backups/ 下），两种结局都如实提示。
+   */
+  private async backupNow(): Promise<void> {
+    if (this.backupBusy) {
+      return;
+    }
+    this.backupBusy = true;
+    try {
+      const r = await this.svc.backupEntry().exportAndShare();
+      this.notice = r.shared
+        ? `备份完成：${r.noteCount} 篇笔记 / ${r.blobCount} 个附件，已拉起系统分享面板…`
+        : `备份完成：${r.noteCount} 篇笔记 / ${r.blobCount} 个附件。分享面板未拉起，备份包仍在应用内。`;
+    } catch (err) {
+      this.notice = `备份失败：${String(err)}`;
+    } finally {
+      this.backupBusy = false;
+    }
+  }
+
+  /** 选包恢复：先确认（整库替换不可撤销），再走 BackupService 既有原子替换路径 */
+  private async restoreFromBackup(): Promise<void> {
+    if (this.restoring) {
+      return;
+    }
+    this.restoring = true;
+    try {
+      const outcome = await this.svc.backupEntry().pickAndRestore();
+      if (outcome.kind === 'restored') {
+        this.notice = `恢复完成：笔记 ${outcome.notes} 篇、附件 ${outcome.attachments} 个、标签 ${outcome.tags} 个。`;
+      } else if (outcome.kind === 'failed') {
+        this.notice = `恢复被拒绝：${outcome.detail}（备份包未通过校验，当前数据未被改动）`;
+      }
+      // cancelled：用户取消选择不是错误，不打扰
+    } catch (err) {
+      this.notice = `恢复失败：${String(err)}`;
+    } finally {
+      this.restoring = false;
+    }
+  }
+
+  private confirmRestoreFromBackup(): void {
+    AlertDialog.show({
+      title: '从备份恢复',
+      message: '恢复会用所选备份包整体替换当前全部笔记与附件（单事务原子替换，不可撤销）。'
+        + '如果当前有还没备份的新内容，请先返回执行「立即备份」。',
+      primaryButton: { value: '取消', action: () => undefined },
+      secondaryButton: { value: '选择备份包', action: () => {
+        this.restoreFromBackup();
+      } },
+    });
   }
 
   private async refresh(): Promise<void> {
@@ -349,6 +406,34 @@ struct Settings {
         .alignItems(HorizontalAlign.Start)
         .width('100%')
       }
+
+      Divider()
+
+      // 可恢复备份（WHY-131 条件 A；设计 §4.2）：与「可读导出」是两条路径，文案必须区分
+      Text('可恢复备份（不是导出）')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      Text('生成含清单、格式版本与逐文件摘要校验的备份包，经系统分享面板保存到别处；'
+        + '需要时可从备份包把数据完整恢复回本应用（恢复会整体替换当前数据）。'
+        + '与上面的「可读导出」不同：导出是给人读的文件包，不能用于恢复。')
+        .fontSize(12)
+        .fontColor('#595959')
+        .width('100%')
+      Button(this.backupBusy ? '备份中…' : '立即备份（生成可恢复备份包）')
+        .width('100%')
+        .enabled(!this.backupBusy)
+        .onClick(() => {
+          this.backupNow();
+        })
+      Button(this.restoring ? '恢复中…' : '从备份包恢复…')
+        .width('100%')
+        .enabled(!this.restoring)
+        .fontColor('#D4380D')
+        .backgroundColor('#F5F5F5')
+        .onClick(() => {
+          this.confirmRestoreFromBackup();
+        })
 
       // MCP 局域网服务（S6-7，设计 §4.5.3）：开关 + 配对 + 已授权客户端管理
       Text('MCP 局域网服务')

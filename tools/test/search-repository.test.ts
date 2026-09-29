@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import { SchemaMigrator } from '../../common/src/main/ets/core/data/migrator';
 import { NoteRepository } from '../../common/src/main/ets/core/data/note-repository';
 import { SearchRepository, TITLE_MATCH_BONUS } from '../../common/src/main/ets/core/data/search-repository';
+import { InboxRepository } from '../../common/src/main/ets/core/data/inbox-repository';
+import { ClipIngestService } from '../../common/src/main/ets/core/clip';
+import { InboxService } from '../../common/src/main/ets/core/inbox';
 import { transact } from '../../common/src/main/ets/core/data/rdb';
-import { Note, NoteSource } from '../../common/src/main/ets/core/model';
+import { ClipEntry, Note, NoteSource } from '../../common/src/main/ets/core/model';
 import { NodeSqliteExecutor } from './support/sqlite-executor';
-import { CapturingLogger, FixedClock, SequentialRandom } from './support/platform';
+import { CapturingLogger, FixedClock, NodeHasher, SequentialRandom } from './support/platform';
 
 const BASE_MS = 1759000000000;
 
@@ -15,6 +18,7 @@ interface Fixture {
   db: NodeSqliteExecutor;
   notes: NoteRepository;
   search: SearchRepository;
+  inboxSvc: InboxService;
 }
 
 async function makeFixture(): Promise<Fixture> {
@@ -22,9 +26,17 @@ async function makeFixture(): Promise<Fixture> {
   const logger = new CapturingLogger();
   await new SchemaMigrator(db, logger).migrate();
   const clock = new FixedClock(BASE_MS);
-  const notes = new NoteRepository({ db, clock, random: new SequentialRandom(), logger });
+  const rand = new SequentialRandom();
+  const notes = new NoteRepository({ db, clock, random: rand, logger });
   const search = new SearchRepository({ db });
-  return { db, notes, search };
+  const inboxSvc = new InboxService({
+    ingest: new ClipIngestService({ clock, hasher: new NodeHasher(), random: rand, logger }),
+    inbox: new InboxRepository({ db, logger }),
+    notes,
+    clock,
+    logger,
+  });
+  return { db, notes, search, inboxSvc };
 }
 
 async function createNote(f: Fixture, title: string, content: string): Promise<Note> {
@@ -74,8 +86,7 @@ test('标题加权：标题命中的笔记排在正文命中之前', async () =>
   assert.ok(hits[0].score - hits[1].score >= TITLE_MATCH_BONUS - 100);
 });
 
-test('1–2 字符查询走 LIKE 兜底：双字命中，LIKE 通配符按字面处理', async () => {
-  const f = await makeFixture();
+test('1–2 字符查询走 LIKE 兜底：双字命中，LIKE 通配符按字面处理', async () => {  const f = await makeFixture();
   await createNote(f, '甲', '进度 5% 完成的口径');
   await createNote(f, '乙', '目标 5 成');
   const two = await f.search.search('笔记');
@@ -90,6 +101,24 @@ test('1–2 字符查询走 LIKE 兜底：双字命中，LIKE 通配符按字面
   assert.equal(pct[0].title, '甲');
 });
 
+test('单字查询（LIKE 兜底路径）：命中正确笔记，未命中者不返回', async () => {
+  const f = await makeFixture();
+  const jia = await createNote(f, '甲', '阅读进度百分之五');
+  await createNote(f, '乙', '完全没有相关词');
+  const digit = await createNote(f, '丙', '版本 5 发布说明');
+
+  // 中文字单字：LIKE 受限扫描按"串"语义命中
+  const hits = await f.search.search('五');
+  assert.deepEqual(hits.map((h) => h.id), [jia.id]);
+
+  // ASCII 单字符同理（与回归探测 s0 场景一致的落库断言）
+  const digitHits = await f.search.search('5');
+  assert.deepEqual(digitHits.map((h) => h.id), [digit.id]);
+
+  // 不存在的单字返回空，不误召回
+  assert.deepEqual(await f.search.search('鲸'), []);
+});
+
 test('回收站排除：软删除后搜不到，恢复后重新命中（G7 无已删数据泄露）', async () => {
   const f = await makeFixture();
   const note = await createNote(f, '待删', '剪贴板权限说明');
@@ -98,6 +127,21 @@ test('回收站排除：软删除后搜不到，恢复后重新命中（G7 无�
   assert.deepEqual(await f.search.search('剪贴板'), []);
   await f.notes.restore(note.id);
   assert.equal((await f.search.search('剪贴板')).length, 1);
+});
+
+test('搜索默认排除收件箱与回收站（§4.7）：两者条目均不出现在搜索结果', async () => {
+  const f = await makeFixture();
+  // 存活笔记命中关键词 —— 证明查询本身有效，排除断言才有意义
+  const live = await createNote(f, '存活笔记', '正文包含北极星计划');
+  // 收件箱条目含同一关键词：clipboard_item 是独立表，结构上不进 note_fts
+  const captured = await f.inboxSvc.capture({ text: '剪贴板里的北极星摘录', entry: ClipEntry.MANUAL });
+  assert.ok(captured.item.id.length > 0);
+  // 回收站笔记含同一关键词
+  const trashed = await createNote(f, '已删笔记', '被删除的北极星草稿');
+  await f.notes.softDelete(trashed.id);
+
+  const hits = await f.search.search('北极星');
+  assert.deepEqual(hits.map((h) => h.id), [live.id]);
 });
 
 test('正文更新经触发器同步：旧词失效、新词命中（增量更新）', async () => {

@@ -16,4 +16,8 @@ module.exports = {
   // S6-7 entry MCP 装配层（McpNoteStoreAdapter 的 NoteService/NoteRepository/NoteSource）
   ...require('../../../dist/common/src/main/ets/core/notes.js'),
   ...require('../../../dist/common/src/main/ets/core/data/note-repository.js'),
+  // WHY-131 条件 A：entry 备份/恢复入口编排内核（BackupEntryCore）
+  ...require('../../../dist/common/src/main/ets/core/backup-service.js'),
+  // LogLevel 等枚举的运行期取值（entry 装配内核 logger 调用用）
+  ...require('../../../dist/common/src/main/ets/core/ports.js'),
 };

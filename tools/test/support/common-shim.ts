@@ -21,3 +21,5 @@ export { NoteService } from '../../../common/src/main/ets/core/notes';
 export { NoteRepository } from '../../../common/src/main/ets/core/data/note-repository';
 export { Note, NoteSource, Tag } from '../../../common/src/main/ets/core/model';
 export { IClock, IHasher, ILogger, IRandom, LogLevel } from '../../../common/src/main/ets/core/ports';
+// WHY-131 条件 A：entry 备份/恢复入口编排内核（BackupEntryCore）
+export { BackupService, BackupExportResult, RestoreResult } from '../../../common/src/main/ets/core/backup-service';

@@ -2,6 +2,7 @@ import { bundleManager } from '@kit.AbilityKit';
 import {
   AppContextHolder,
   AppDataRuntime,
+  BackupService,
   BlobCas,
   ClipIngestService,
   CryptoHasher,
@@ -23,6 +24,7 @@ import {
   SystemTtsEngine,
 } from 'speech';
 import { McpService } from './McpService';
+import { BackupEntry } from './BackupEntry';
 
 /**
  * 依赖装配（最薄的一层；S3-1 从 Index 页抽出为独立模块，供收件箱页 / 笔记列表页 / 编辑页共用）。
@@ -51,6 +53,7 @@ export class AppServices {
   private shareSvc: ShareIntakeService | undefined = undefined;
   private mcpSvc: McpService | undefined = undefined;
   private appVersion: string | undefined = undefined;
+  private backupEntryInst: BackupEntry | undefined = undefined;
   private engineInst: SystemTtsEngine | undefined = undefined;
 
   private constructor() {
@@ -158,6 +161,25 @@ export class AppServices {
       });
     }
     return this.mcpSvc;
+  }
+
+  /**
+   * 备份/恢复入口（WHY-131 条件 A；设计 §4.2「可恢复备份」）：设置页接线面。
+   * 薄装配 —— 恢复语义全在 common 的 BackupService（先校验→暂存→单事务原子替换），
+   * 此处只提供装配好的入口；导出 ≠ 备份的文案区分在设置页（V1.4 F06）。
+   */
+  backupEntry(): BackupEntry {
+    if (this.backupEntryInst === undefined) {
+      this.backupEntryInst = new BackupEntry({
+        random: this.random,
+        logger: this.logger,
+        backup: async (): Promise<BackupService> => {
+          const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+          return rt.getBackupService(await this.resolveAppVersion());
+        },
+      });
+    }
+    return this.backupEntryInst;
   }
 
   /**
