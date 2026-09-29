@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SchemaMigrator } from '../../common/src/main/ets/core/data/migrator';
-import { NoteRepository } from '../../common/src/main/ets/core/data/note-repository';
+import { NoteRepository, NoteConflictError } from '../../common/src/main/ets/core/data/note-repository';
 import { InboxRepository } from '../../common/src/main/ets/core/data/inbox-repository';
 import { BlobRepository } from '../../common/src/main/ets/core/data/blob-repository';
 import { transact } from '../../common/src/main/ets/core/data/rdb';
@@ -246,4 +246,51 @@ test('BlobRepository: 外键拒绝悬空引用', async () => {
   await assert.rejects(() =>
     blobs.attach('no-such-note', 'd'.repeat(64), AttachmentRole.FILE, 0),
   );
+});
+
+// ---------------------------------------------------------------------------
+// 并发写入冲突（S4-3 负向用例）：revision 乐观校验，冲突如实报错、不得静默覆盖
+// ---------------------------------------------------------------------------
+
+test('updateContent：expectedRevision 匹配才写入，不匹配抛 NoteConflictError 且内容不被覆盖', async () => {
+  const f = await makeFixture();
+  const note = await f.notes.create({ title: 't', contentMd: 'v1', source: NoteSource.MANUAL });
+
+  // 写者 A 基于 revision 1 成功
+  const a = await f.notes.updateContent(note.id, 'v2', undefined, 1);
+  assert.equal(a.contentMd, 'v2');
+  assert.equal(a.revision, 2);
+
+  // 写者 B 仍持有旧的 revision 1 → 冲突；其内容不得入库、revision 不得递增
+  await assert.rejects(
+    () => f.notes.updateContent(note.id, 'v3', undefined, 1),
+    (err: unknown) => err instanceof NoteConflictError,
+  );
+  const after = await f.notes.getById(note.id);
+  assert.equal(after?.contentMd, 'v2', '冲突写不得覆盖已有内容');
+  assert.equal(after?.revision, 2, '冲突写不得递增 revision');
+});
+
+test('updateContent：笔记被删除后冲突报错如实（actual 为 undefined）', async () => {
+  const f = await makeFixture();
+  const note = await f.notes.create({ title: 't', contentMd: 'v1', source: NoteSource.MANUAL });
+  await f.notes.softDelete(note.id);
+  await assert.rejects(
+    () => f.notes.updateContent(note.id, 'v2', undefined, 1),
+    (err: unknown) => err instanceof NoteConflictError,
+  );
+});
+
+test('update（标题+正文一次性保存）：同样执行乐观校验', async () => {
+  const f = await makeFixture();
+  const note = await f.notes.create({ title: 't', contentMd: 'v1', source: NoteSource.MANUAL });
+  const saved = await f.notes.update(note.id, 't2', 'v2', 1);
+  assert.equal(saved.title, 't2');
+  assert.equal(saved.revision, 2);
+  await assert.rejects(
+    () => f.notes.update(note.id, 't3', 'v3', 1),
+    (err: unknown) => err instanceof NoteConflictError,
+  );
+  const after = await f.notes.getById(note.id);
+  assert.equal(after?.title, 't2');
 });
