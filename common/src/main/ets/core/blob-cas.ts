@@ -118,13 +118,15 @@ export class BlobCas {
 
   /**
    * 校验指定摘要的内容是否与文件名一致。用于恢复演练与 GC 前的引用核对。
+   * 字节级摘要（S4-3 审计整改）：blob 可能是任意二进制，文本解码往返会损坏非 UTF-8
+   * 字节导致误判 mismatch。
    */
   async verify(sha: string): Promise<boolean> {
     if (!(await this.exists(sha))) {
       return false;
     }
-    const content: string = await this.read(sha);
-    return (await this.hasher.sha256Hex(content)) === sha;
+    const content: Uint8Array = await this.readBytes(sha);
+    return (await this.hasher.sha256HexBytes(content)) === sha;
   }
 
   /**

@@ -27,7 +27,7 @@ function noopCallbacks(): TtsCallbacks {
   };
 }
 
-/** 让 fire-and-forget 的 speak() 跑过 ensureEngine 前置 await，进入 speaking 态 */
+/** 让 fire-and-forget 的 speak() 跑过内部微任务（登记在 speak 入口同步完成，S5-2 起） */
 function tick(): Promise<void> {
   return new Promise<void>((resolve: () => void) => {
     setTimeout(resolve, 0);

@@ -1,15 +1,22 @@
 /**
  * mcp（HAR）：Agent 接入（设计 §4.5）。
  *
- * **进度口径（S6-1 后）**：传输层（S6-2）+ AccessPolicy 服务端强制（S6-1）已实现 ——
- * `./src/main/ets/core/access-policy.ts`：默认拒绝、每客户端授权清单、
- * 授权变更即时生效（现场查表不缓存）、PolicyGate 三态审计（denied/error/ok），
- * 审计经 `IMcpAuditSink` 落库到 common 的 `mcp_audit` 表（schema v2，只记元数据）。
+ * **进度口径（S6-3 后）**：传输层（S6-2）、AccessPolicy 服务端强制（S6-1）、
+ * 协议适配层（S6-3）均已实现：
+ *  - `./src/main/ets/core/access-policy.ts`：默认拒绝、每客户端授权清单、
+ *    授权变更即时生效（现场查表不缓存）、PolicyGate 三态审计（denied/error/ok），
+ *    审计经 `IMcpAuditSink` 落库到 common 的 `mcp_audit` 表（schema v2，只记元数据）；
+ *  - `./src/main/ets/core/dispatcher.ts`：ClipNoteMcpDispatcher —— initialize
+ *    锁定协商（恒回 `2025-11-25`）、ping/tools/list/tools/call 分发、每 clientId
+ *    滑动窗限流（-32002）、6 首发工具语义（含 append 应用级幂等键与
+ *    expected_revision 冲突结果），工具调用唯一经 PolicyGate.execute 收口，
+ *    AccessDeniedError 映射 -32002；笔记触达经 NoteStoreLike 结构端口
+ *    （不 import common，装配层用 NoteService 适配）。
  *
- * **仍未实现（S6-3）**：`IMcpAdapter` 的协议适配（initialize 协商负载、
- * tools/* 分发、PolicyGate 接入 McpDispatcher）。
- * 工具级授权语义与工具契约（`./src/main/ets/core/access-policy.ts` 前半部分，
- * 本文件再导出）不随协议版本变化。
+ * **仍未实现（遗留）**：entry 装配接线（NoteService → NoteStoreLike 适配、
+ * 审计 sink 接 McpAuditRepository 已在测试验证，UI 开关/配对页未接）；
+ * G3 真机互操作复核（Cherry Studio 实机连真机服务端，主机侧台架见
+ * tools/probes/g3-interop.ts）。工具级授权语义与工具契约不随协议版本变化。
  */
 
 export * from './src/main/ets/core/access-policy';
@@ -38,6 +45,7 @@ export * from './src/main/ets/core/credentials';
 export * from './src/main/ets/core/pairing';
 export * from './src/main/ets/core/x509-selfsign';
 export * from './src/main/ets/core/endpoint';
+export * from './src/main/ets/core/dispatcher';
 export * from './src/main/ets/core/server';
 
 // ---- 鸿蒙适配（@kit.* 只允许出现在 adapters/；真机验证项 R-A 见各文件头注释） ----

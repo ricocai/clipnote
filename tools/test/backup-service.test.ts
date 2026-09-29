@@ -351,3 +351,41 @@ test('软删除笔记与收件箱不进备份', async () => {
   // 被软删笔记独占的 blob 不进包
   assert.equal(manifest.blobs.length, 0);
 });
+
+test('二进制附件（非 UTF-8 字节）备份→恢复逐字节一致（S4-3 审计整改看护）', async () => {
+  const src = await makeWorld();
+  // 真实 PNG 头 + 非法 UTF-8 序列（0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A + 截断字节）
+  const binary = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x80, 0x81]);
+  const note = await src.notes.create({ title: '带图笔记', contentMd: '# 带图笔记', source: NoteSource.MANUAL });
+  const put = await src.cas.putBytes(binary);
+  await src.blobs.saveRecord({
+    sha256: put.sha256,
+    relativePath: put.relativePath,
+    mime: 'image/png',
+    size: put.size,
+    status: BlobStatus.REFERENCED,
+  });
+  await src.blobs.attach(note.id, put.sha256, AttachmentRole.INLINE_IMAGE, 0);
+
+  const exported = await src.service.exportBackup();
+  const manifest = manifestOf(await src.fs.readBytes(exported.zipPath));
+  assert.equal(manifest.blobs.length, 1);
+  // 包内条目字节必须与 CAS 原始字节逐字节一致（不经过任何文本解码）
+  const zip = readZip(await src.fs.readBytes(exported.zipPath));
+  const entry = zip.entries.find((x) => x.name === manifest.blobs[0].relativePath);
+  assert.ok(entry !== undefined);
+  assert.deepEqual(Array.from(entry.data), Array.from(binary), '备份包内 blob 不得被文本解码损坏');
+
+  // 恢复到全新世界：逐字节一致、恢复扫描干净
+  const dst = await makeWorld();
+  dst.fs.seedBytes(exported.zipPath, await src.fs.readBytes(exported.zipPath));
+  const result = await dst.service.restoreBackup(exported.zipPath);
+  assert.equal(result.ok, true, JSON.stringify(result.issues));
+  const restored = await dst.cas.readBytes(put.sha256);
+  assert.deepEqual(Array.from(restored), Array.from(binary), '恢复后字节必须逐字节一致');
+  assert.equal(result.recovery?.missing.length, 0);
+  assert.equal(result.recovery?.mismatched.length, 0);
+  const attachments = await dst.blobs.listAttachmentsOf(note.id);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].blobSha256, put.sha256);
+});

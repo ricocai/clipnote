@@ -108,6 +108,10 @@
   /**
    * DocumentBlock[] → 阅读页 HTML。
    * 契约：块来自 common parseDocument（docRevision 内稳定）；markdown 为同一 revision 的原文。
+   *
+   * 每个顶层元素带 data-cl-i（源块下标）：朗读高亮（highlight()）与将来任何
+   * 块级联动的锚点。连续 list_item 合并为一个 <ul>，取首条下标——高亮落到
+   * 整组（段落级口径，设计 §4.6）。
    */
   function buildReaderHtml(blocks, markdown) {
     var out = [];
@@ -117,17 +121,17 @@
       switch (b.type) {
         case 'heading': {
           var level = b.level >= 1 && b.level <= 6 ? b.level : 1;
-          out.push('<h' + level + '>' + escapeHtml(b.text) + '</h' + level + '>');
+          out.push('<h' + level + ' data-cl-i="' + i + '">' + escapeHtml(b.text) + '</h' + level + '>');
           i += 1;
           break;
         }
         case 'paragraph':
-          out.push('<p>' + escapeHtml(b.text) + '</p>');
+          out.push('<p data-cl-i="' + i + '">' + escapeHtml(b.text) + '</p>');
           i += 1;
           break;
         case 'list_item': {
           // 连续 LIST_ITEM 合并为一个 <ul>（块模型按条目产出）
-          out.push('<ul>');
+          out.push('<ul data-cl-i="' + i + '">');
           while (i < blocks.length && blocks[i].type === 'list_item') {
             out.push('<li>' + escapeHtml(blocks[i].text) + '</li>');
             i += 1;
@@ -138,19 +142,19 @@
         case 'code': {
           var parts = codeParts(b, markdown);
           out.push(
-            '<pre class="cl-code" data-lang="' + escapeHtml(parts.lang) + '"><code>' +
+            '<pre class="cl-code" data-cl-i="' + i + '" data-lang="' + escapeHtml(parts.lang) + '"><code>' +
               escapeHtml(parts.body) + '</code></pre>'
           );
           i += 1;
           break;
         }
         case 'quote':
-          out.push('<blockquote>' + escapeHtmlWithBreaks(b.text) + '</blockquote>');
+          out.push('<blockquote data-cl-i="' + i + '">' + escapeHtmlWithBreaks(b.text) + '</blockquote>');
           i += 1;
           break;
         case 'table':
           // 表格整段原文用等宽 pre 展示（单元格边界不被改动，设计 §4.3 块模型口径）
-          out.push('<pre class="cl-table">' + escapeHtmlWithBreaks(b.text) + '</pre>');
+          out.push('<pre class="cl-table" data-cl-i="' + i + '">' + escapeHtmlWithBreaks(b.text) + '</pre>');
           i += 1;
           break;
         case 'image': {
@@ -159,27 +163,28 @@
           if (SHA256_RE.test(ref)) {
             var alt = escapeHtml(b.text);
             out.push(
-              '<figure><img src="' + ATTACHMENT_SCHEME + ref + '" alt="' + alt + '">' +
+              '<figure data-cl-i="' + i + '"><img src="' + ATTACHMENT_SCHEME + ref + '" alt="' + alt + '">' +
                 (alt.length > 0 ? '<figcaption>' + alt + '</figcaption>' : '') +
                 '</figure>'
             );
           } else {
             var label = escapeHtml(b.text);
             out.push(
-              '<p class="cl-image-missing">[图片]' + (label.length > 0 ? ' ' + label : '') + '</p>'
+              '<p class="cl-image-missing" data-cl-i="' + i + '">[图片]' +
+                (label.length > 0 ? ' ' + label : '') + '</p>'
             );
           }
           i += 1;
           break;
         }
         case 'thematic_break':
-          out.push('<hr>');
+          out.push('<hr data-cl-i="' + i + '">');
           i += 1;
           break;
         case 'raw':
         default:
           // 未覆盖语法：转义后原文展示，绝不当 HTML 解释（G6）
-          out.push('<pre class="cl-raw">' + escapeHtml(b.text) + '</pre>');
+          out.push('<pre class="cl-raw" data-cl-i="' + i + '">' + escapeHtml(b.text) + '</pre>');
           i += 1;
           break;
       }
@@ -187,10 +192,46 @@
     return out.join('\n');
   }
 
+  /**
+   * 朗读高亮（设计 §4.6 段落级）：给 data-cl-i 命中的顶层元素加 .cl-speaking
+   * 并滚入视野；blockIndex < 0 清除高亮。合并的 <ul> 只有首条下标——向下回退
+   * 到最近存在的锚点（列表后续条目高亮整组）。入参只取整数下标，不可能注入
+   * 选择器（data-cl-i 全部来自本文件的受控拼接）。
+   */
+  function highlight(blockIndex) {
+    var rootEl = typeof document === 'undefined' ? null : document.getElementById('root');
+    if (!rootEl) {
+      return;
+    }
+    var prev = rootEl.querySelector('.cl-speaking');
+    if (prev) {
+      prev.classList.remove('cl-speaking');
+    }
+    var idx = Math.floor(Number(blockIndex));
+    if (!isFinite(idx) || idx < 0) {
+      return;
+    }
+    var el = null;
+    while (idx >= 0) {
+      el = rootEl.querySelector('[data-cl-i="' + idx + '"]');
+      if (el) {
+        break;
+      }
+      idx -= 1;
+    }
+    if (el) {
+      el.classList.add('cl-speaking');
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
+    }
+  }
+
   return {
     escapeHtml: escapeHtml,
     slimToken: slimToken,
     tokenize: tokenize,
     buildReaderHtml: buildReaderHtml,
+    highlight: highlight,
   };
 });

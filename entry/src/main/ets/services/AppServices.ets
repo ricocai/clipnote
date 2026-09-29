@@ -17,6 +17,11 @@ import {
   SystemClock,
   SystemShareHandoff,
 } from 'common';
+import {
+  PreferencesTtsSettingsStore,
+  SystemTtsDriver,
+  SystemTtsEngine,
+} from 'speech';
 
 /**
  * 依赖装配（最薄的一层；S3-1 从 Index 页抽出为独立模块，供收件箱页 / 笔记列表页 / 编辑页共用）。
@@ -44,6 +49,7 @@ export class AppServices {
   private noteSvc: NoteService | undefined = undefined;
   private shareSvc: ShareIntakeService | undefined = undefined;
   private appVersion: string | undefined = undefined;
+  private engineInst: SystemTtsEngine | undefined = undefined;
 
   private constructor() {
     const root: string = AppContextHolder.filesDir();
@@ -112,6 +118,25 @@ export class AppServices {
       });
     }
     return this.shareSvc;
+  }
+
+  /**
+   * 系统离线 TTS 引擎（S5-1/5-2 单例）：音色/语速持久化走 preferences。
+   * 引擎是「无 UI 状态」组件，进程内只建一份；播放调度（SpeechPlaybackController）
+   * 由使用方（阅读页）各自持有——控制器绑定 UI 回调，不进单例。
+   */
+  speechEngine(): SystemTtsEngine {
+    if (this.engineInst === undefined) {
+      const ctx = AppContextHolder.get();
+      if (ctx === undefined) {
+        throw new Error('AppContext 未初始化——EntryAbility 必须先 AppContextHolder.set()');
+      }
+      this.engineInst = new SystemTtsEngine(
+        new SystemTtsDriver(),
+        new PreferencesTtsSettingsStore(ctx),
+      );
+    }
+    return this.engineInst;
   }
 
   /**
