@@ -37,6 +37,9 @@ struct NoteList {
   @State rows: NoteRow[] = [];
   @State notice: string = '';
   @State dataReady: boolean = false;
+  /** 多选导出模式（S4-2 列表多选入口）：点行切换选中而非进阅读页 */
+  @State selecting: boolean = false;
+  @State selectedIds: string[] = [];
 
   private readonly svc: AppServices = AppServices.get();
   private noteSvc: NoteService | undefined = undefined;
@@ -98,6 +101,40 @@ struct NoteList {
   private openEditor(id: string): void {
     const params: Record<string, string> = { 'noteId': id };
     router.pushUrl({ url: 'pages/NoteEdit', params: params });
+  }
+
+  /** 多选切换：新数组赋值触发 @State 刷新 */
+  private toggleSelect(id: string): void {
+    if (this.selectedIds.indexOf(id) >= 0) {
+      this.selectedIds = this.selectedIds.filter((v: string) => v !== id);
+    } else {
+      this.selectedIds = this.selectedIds.concat([id]);
+    }
+  }
+
+  private exitSelecting(): void {
+    this.selecting = false;
+    this.selectedIds = [];
+  }
+
+  /**
+   * 批量可读导出（S4-2）：所选笔记打成一个 ZIP（链接重写 + 附件内容寻址去重），
+   * 经系统分享面板交接；导出 ≠ 备份（V1.4 F06），不含恢复信息。
+   */
+  private async exportSelected(): Promise<void> {
+    if (this.selectedIds.length === 0) {
+      this.notice = '先勾选要导出的笔记。';
+      return;
+    }
+    try {
+      const result = await this.svc.exportAndShare(this.selectedIds, 'batch');
+      this.notice = result.unresolved.length > 0
+        ? `已导出 ${result.record.noteCount} 篇。${result.unresolved.length} 个附件未能带上（链接保留原样）。`
+        : `已导出 ${result.record.noteCount} 篇，正在拉起系统分享面板…`;
+      this.exitSelecting();
+    } catch (err) {
+      this.notice = `导出失败：${String(err)}`;
+    }
   }
 
   private async togglePin(row: NoteRow): Promise<void> {
@@ -193,18 +230,35 @@ struct NoteList {
           .fontWeight(FontWeight.Bold)
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
-        Text('搜索')
-          .fontSize(15)
-          .fontColor('#1F6FEB')
-          .onClick(() => {
-            router.pushUrl({ url: 'pages/Search' });
-          })
-        Text('新建')
-          .fontSize(15)
-          .fontColor('#1F6FEB')
-          .onClick(() => {
-            this.openEditor('');
-          })
+        if (this.selecting) {
+          Text('取消')
+            .fontSize(15)
+            .fontColor('#1F6FEB')
+            .onClick(() => {
+              this.exitSelecting();
+            })
+        } else {
+          Text('搜索')
+            .fontSize(15)
+            .fontColor('#1F6FEB')
+            .onClick(() => {
+              router.pushUrl({ url: 'pages/Search' });
+            })
+          Text('多选')
+            .fontSize(15)
+            .fontColor('#1F6FEB')
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.selecting = true;
+            })
+          Text('新建')
+            .fontSize(15)
+            .fontColor('#1F6FEB')
+            .margin({ left: 12 })
+            .onClick(() => {
+              this.openEditor('');
+            })
+        }
       }
       .width('100%')
 
@@ -230,11 +284,20 @@ struct NoteList {
           ForEach(this.rows, (row: NoteRow) => {
             ListItem() {
               Column({ space: 4 }) {
-                Text(`${row.pinned ? '📌 ' : ''}${row.contentType === CONTENT_TYPE_HTML ? '[HTML] ' : ''}${row.title}`)
-                  .fontSize(15)
-                  .fontWeight(FontWeight.Medium)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                Row({ space: 8 }) {
+                  if (this.selecting) {
+                    Text(this.selectedIds.indexOf(row.id) >= 0 ? '☑' : '☐')
+                      .fontSize(16)
+                      .fontColor('#1F6FEB')
+                  }
+                  Text(`${row.pinned ? '📌 ' : ''}${row.contentType === CONTENT_TYPE_HTML ? '[HTML] ' : ''}${row.title}`)
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Medium)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .layoutWeight(1)
+                }
+                .width('100%')
                 Text(row.preview)
                   .fontSize(13)
                   .fontColor('#595959')
@@ -265,12 +328,34 @@ struct NoteList {
               .borderRadius(8)
             }
             .onClick(() => {
-              this.openReader(row.id, row.contentType);
+              if (this.selecting) {
+                this.toggleSelect(row.id);
+              } else {
+                this.openReader(row.id, row.contentType);
+              }
             })
-            .swipeAction({ end: this.itemEnd(row) })
+            .swipeAction(this.selecting ? undefined : { end: this.itemEnd(row) })
           }, (row: NoteRow) => row.id)
         }
         .layoutWeight(1)
+        .width('100%')
+      }
+
+      // 多选导出操作条（S4-2 批量入口）：导出 ≠ 备份，产物经系统分享交接
+      if (this.selecting) {
+        Row({ space: 10 }) {
+          Text(`已选 ${this.selectedIds.length} 篇`)
+            .fontSize(13)
+            .fontColor('#595959')
+            .layoutWeight(1)
+          Button(`导出所选（可读 ZIP，非备份）`)
+            .fontSize(14)
+            .height(36)
+            .enabled(this.selectedIds.length > 0)
+            .onClick(() => {
+              this.exportSelected();
+            })
+        }
         .width('100%')
       }
     }

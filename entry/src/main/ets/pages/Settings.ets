@@ -1,9 +1,12 @@
 import { router } from '@kit.ArkUI';
 import {
   DevicePermissionStatus,
+  ExportRecord,
   PasteboardPermissionState,
   PermissionStatusReport,
+  describeExportRecord,
 } from 'common';
+import { AppServices } from '../services/AppServices';
 
 /**
  * 设置页（S2-4 任务 3：权限状态区 + 能力边界说明）。
@@ -23,11 +26,50 @@ struct Settings {
   @State pasteboardLine: string = '剪贴板读取：查询中…';
   @State notificationLine: string = '通知栏消息：查询中…';
   @State notice: string = '';
+  /** 最近导出记录（S4-2；只读展示，元数据无正文） */
+  @State exportLines: string[] = [];
+  @State exporting: boolean = false;
 
   private readonly perm: DevicePermissionStatus = new DevicePermissionStatus();
+  private readonly svc: AppServices = AppServices.get();
 
   aboutToAppear(): void {
     this.refresh();
+    this.loadExportRecords();
+  }
+
+  /** 最近导出记录（设置页展示口径：每条一行，时间倒序，最多 5 条） */
+  private async loadExportRecords(): Promise<void> {
+    try {
+      const svc = await this.svc.exportService();
+      const records: ExportRecord[] = await svc.listRecords(5);
+      this.exportLines = records.map((r: ExportRecord) => describeExportRecord(r));
+    } catch (err) {
+      // 数据层未就绪等场景：记录区留空即可，不伪装成"无导出历史"
+      this.exportLines = [];
+    }
+  }
+
+  /**
+   * 全量可读导出（S4-2 设置页入口）：全部未删除笔记 + 附件打 ZIP，经系统分享面板交接。
+   * 文案纪律（V1.4 F06）：这是**可读导出**，不是备份——不含恢复信息，不能用于恢复。
+   */
+  private async exportAll(): Promise<void> {
+    if (this.exporting) {
+      return;
+    }
+    this.exporting = true;
+    try {
+      const result = await this.svc.exportAndShare([], 'full');
+      this.notice = result.unresolved.length > 0
+        ? `已导出 ${result.record.noteCount} 篇。${result.unresolved.length} 个附件未能带上（链接保留原样）。`
+        : `已导出 ${result.record.noteCount} 篇，正在拉起系统分享面板…`;
+      await this.loadExportRecords();
+    } catch (err) {
+      this.notice = `导出失败：${String(err)}`;
+    } finally {
+      this.exporting = false;
+    }
   }
 
   private async refresh(): Promise<void> {
@@ -154,6 +196,42 @@ struct Settings {
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')
+
+      Divider()
+
+      // 可读导出（S4-2，V1.4 F06）：与"可恢复备份"是两条路径，文案必须区分
+      Text('可读导出（不是备份）')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      Text('把笔记导出为 Markdown / 受控静态 HTML + 附件 ZIP，经系统分享面板交接给其他工具。'
+        + '导出包不含恢复所需的元数据与校验信息，不能用于把数据恢复回本应用；'
+        + '可恢复备份请使用备份功能。')
+        .fontSize(12)
+        .fontColor('#595959')
+        .width('100%')
+      Button(this.exporting ? '导出中…' : '全量导出（Markdown/HTML + 附件 ZIP）')
+        .width('100%')
+        .enabled(!this.exporting)
+        .onClick(() => {
+          this.exportAll();
+        })
+      if (this.exportLines.length > 0) {
+        Column({ space: 4 }) {
+          Text('最近导出记录')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .width('100%')
+          ForEach(this.exportLines, (line: string) => {
+            Text(line)
+              .fontSize(12)
+              .fontColor('#595959')
+              .width('100%')
+          }, (line: string) => line)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+      }
 
       // MCP 访问审计（S6-1，设计 §4.5.5）：只读查询页，只展示元数据
       Text('MCP 访问审计')

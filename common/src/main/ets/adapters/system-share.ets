@@ -1,0 +1,37 @@
+import { common } from '@kit.AbilityKit';
+import { uniformTypeDescriptor as utd } from '@kit.ArkData';
+import { fileUri } from '@kit.CoreFileKit';
+import { systemShare } from '@kit.ShareKit';
+
+import { ShareHandoff } from '../core/ports';
+
+/**
+ * Share Kit 系统分享面板（S4-2「系统分享交接」）。
+ *
+ * 口径（设计 §4.4 数据交接）：
+ *  - 沙箱路径不直接外发，先经 fileUri.getUriFromPath 转成 file:// URI，
+ *    由系统分享面板向接收方授予临时读权限——应用自己不复制到公共目录；
+ *  - 只拉起面板；用户在面板里选不选接收方、接收方存不存，都不回流本应用
+ *    （导出事实以 ExportRecord 为准）。
+ *
+ * 平台 API 编译口径声明（同 G1/S3-2 纪律）：本文件未经设备编译，按 API 12
+ * （5.0.0(12)）Share Kit 文档口径编写；真机编译若遇签名差异，以 SDK 报错为准修正。
+ */
+export class SystemShareHandoff implements ShareHandoff {
+  constructor(private readonly context: common.UIAbilityContext) {}
+
+  async shareFile(absPath: string, displayName: string): Promise<boolean> {
+    const data: systemShare.SharedData = new systemShare.SharedData({
+      utd: utd.UniformDataType.ZIP,
+      uri: fileUri.getUriFromPath(absPath),
+      title: displayName,
+      description: 'ClipNote 拾记 · 可读导出包（非备份，不能用于恢复）',
+    });
+    const controller: systemShare.ShareController = new systemShare.ShareController(data);
+    await controller.show(this.context, {
+      previewMode: systemShare.SharePreviewMode.DETAIL,
+      selectionMode: systemShare.SelectionMode.SINGLE,
+    });
+    return true;
+  }
+}
