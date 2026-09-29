@@ -1,7 +1,7 @@
 {
   "name": "mcp",
   "version": "0.1.0",
-  "description": "MCP 接入（协议适配 + 传输适配）。S6-2 已实现 Streamable HTTP 服务端传输内核与 TLS/TOFU 配对（设计 §4.5.3）；协议适配（IMcpAdapter）在 S6-3 填充。",
+  "description": "MCP 接入（协议适配 + 传输适配）。S6-2 已实现 Streamable HTTP 服务端传输内核与 TLS/TOFU 配对（设计 §4.5.3）；S6-1 已实现 AccessPolicy 服务端强制与审计落库（§4.5.5）；协议适配（IMcpAdapter）在 S6-3 填充。",
   "main": "Index.ets",
   "author": "",
   "license": "Apache-2.0",

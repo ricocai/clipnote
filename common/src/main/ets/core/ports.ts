@@ -116,6 +116,18 @@ export interface PermissionStatusProbe {
   openAppSettings(): Promise<boolean>;
 }
 
+/**
+ * 系统分享交接（S4-2；设计 §4.4「外部交接是数据交接行为：沙箱路径可能不可读，
+ * 走受控导出/分享机制并验证临时权限」）。
+ *
+ * 口径：只交接**已落盘的导出产物**（沙箱绝对路径）；实现侧负责 file:// URI 转换
+ * 与临时授权。返回值只表示"系统分享面板是否成功拉起"，不承诺接收方完成保存——
+ * 交接结果以导出记录（ExportRecord）为准，不以对端行为为准。
+ */
+export interface ShareHandoff {
+  shareFile(absPath: string, displayName: string): Promise<boolean>;
+}
+
 /** 附件与备份的完整性核对结果（设计 §4.2 恢复扫描 / §8 G5） */
 export interface BlobReconcileReport {
   /** **必须为 0** 才能发布：被引用但文件缺失 —— 绝不允许"笔记已提交但引用文件缺失" */

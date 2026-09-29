@@ -1,3 +1,4 @@
+import { bundleManager } from '@kit.AbilityKit';
 import {
   AppContextHolder,
   AppDataRuntime,
@@ -5,12 +6,16 @@ import {
   ClipIngestService,
   CryptoHasher,
   CryptoRandom,
+  ExportKind,
+  ExportService,
   HilogLogger,
   InboxService,
   NoteService,
+  ReadableExportResult,
   SandboxFileStore,
   ShareIntakeService,
   SystemClock,
+  SystemShareHandoff,
 } from 'common';
 
 /**
@@ -38,6 +43,7 @@ export class AppServices {
   private inboxSvc: InboxService | undefined = undefined;
   private noteSvc: NoteService | undefined = undefined;
   private shareSvc: ShareIntakeService | undefined = undefined;
+  private appVersion: string | undefined = undefined;
 
   private constructor() {
     const root: string = AppContextHolder.filesDir();
@@ -115,5 +121,45 @@ export class AppServices {
   async readAttachmentBytes(sha: string): Promise<Uint8Array> {
     const rt: AppDataRuntime = await AppDataRuntime.whenReady();
     return rt.blobCas.readBytes(sha);
+  }
+
+  /** 应用版本名（导出包 README 署名用）；查询失败如实降级为 unknown，不阻断导出 */
+  private async resolveAppVersion(): Promise<string> {
+    if (this.appVersion === undefined) {
+      try {
+        const info = await bundleManager.getBundleInfoForSelf(
+          bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+        this.appVersion = info.versionName;
+      } catch (err) {
+        this.appVersion = 'unknown';
+      }
+    }
+    return this.appVersion;
+  }
+
+  /** 可读导出服务（S4-2）：数据层就绪后由 AppDataRuntime 装配（产物在 filesDir/exports/） */
+  async exportService(): Promise<ExportService> {
+    const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+    return rt.getExportService(await this.resolveAppVersion());
+  }
+
+  /**
+   * 导出并交接（S4-2 三处入口共用）：先落盘并登记导出记录，再拉起系统分享面板。
+   * 面板拉起失败不抹掉导出事实（记录已入库、产物在 exports/），错误抛给调用方如实提示。
+   */
+  async exportAndShare(noteIds: string[], kind: ExportKind): Promise<ReadableExportResult> {
+    const svc: ExportService = await this.exportService();
+    const result: ReadableExportResult =
+      kind === 'single' ? await svc.exportSingle(noteIds[0])
+        : kind === 'full' ? await svc.exportAll()
+          : await svc.exportBatch(noteIds);
+    const path: string = result.record.filePath;
+    const name: string = path.slice(path.lastIndexOf('/') + 1);
+    const ctx = AppContextHolder.get();
+    if (ctx === undefined) {
+      throw new Error('分享交接不可用：应用上下文未就绪（导出已完成，可在设置页查看记录）');
+    }
+    await new SystemShareHandoff(ctx).shareFile(path, name);
+    return result;
   }
 }

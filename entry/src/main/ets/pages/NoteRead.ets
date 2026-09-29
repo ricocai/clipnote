@@ -125,6 +125,21 @@ struct NoteRead {
   }
 
   /**
+   * 单篇可读导出（S4-2）：Markdown + 附件打 ZIP，经系统分享面板交接。
+   * 与备份无关（导出 ≠ 备份，V1.4 F06）；附件缺失不阻断，如实提示保留原链接。
+   */
+  private async exportThis(): Promise<void> {
+    try {
+      const result = await this.svc.exportAndShare([this.noteId], 'single');
+      this.notice = result.unresolved.length > 0
+        ? `已导出。${result.unresolved.length} 个附件未能带上（正文中链接保留原样）。`
+        : '已导出，正在拉起系统分享面板…';
+    } catch (err) {
+      this.notice = `导出失败：${String(err)}`;
+    }
+  }
+
+  /**
    * 资源拦截（G6 核心边界）：
    *  - attachment://：只服务本篇已授权摘要（预载表命中），否则 404；
    *  - http(s)：一律 404（默认离线，内容不自动联网）；
@@ -163,9 +178,16 @@ struct NoteRead {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
+        Text('导出')
+          .fontSize(15)
+          .fontColor('#1F6FEB')
+          .onClick(() => {
+            this.exportThis();
+          })
         Text('编辑')
           .fontSize(15)
           .fontColor('#1F6FEB')
+          .margin({ left: 12 })
           .onClick(() => {
             router.pushUrl({ url: 'pages/NoteEdit', params: { 'noteId': this.noteId } });
           })

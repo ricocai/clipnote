@@ -8,6 +8,9 @@ import { NoteRepository } from '../core/data/note-repository';
 import { SearchRepository } from '../core/data/search-repository';
 import { InboxRepository } from '../core/data/inbox-repository';
 import { BlobRepository } from '../core/data/blob-repository';
+import { McpAuditRepository } from '../core/data/mcp-audit-repository';
+import { ExportRecordRepository } from '../core/data/export-record-repository';
+import { ExportService } from '../core/export-service';
 import { StartupRecoveryReport, runStartupRecovery } from '../core/data/recovery';
 import { RelationalStoreExecutor } from './relational-store';
 import { SandboxFileStore } from './file-store';
@@ -31,10 +34,13 @@ export class AppDataRuntime {
   readonly search: SearchRepository;
   readonly inbox: InboxRepository;
   readonly blobs: BlobRepository;
+  readonly mcpAudit: McpAuditRepository;
+  readonly exportRecords: ExportRecordRepository;
   readonly blobCas: BlobCas;
   recoveryReport: StartupRecoveryReport | undefined = undefined;
 
   private backupService: BackupService | undefined = undefined;
+  private exportService: ExportService | undefined = undefined;
 
   private constructor(
     executor: IRdbExecutor,
@@ -42,6 +48,8 @@ export class AppDataRuntime {
     search: SearchRepository,
     inbox: InboxRepository,
     blobs: BlobRepository,
+    mcpAudit: McpAuditRepository,
+    exportRecords: ExportRecordRepository,
     blobCas: BlobCas,
     private readonly filesDir: string,
     private readonly clock: IClock,
@@ -54,6 +62,8 @@ export class AppDataRuntime {
     this.search = search;
     this.inbox = inbox;
     this.blobs = blobs;
+    this.mcpAudit = mcpAudit;
+    this.exportRecords = exportRecords;
     this.blobCas = blobCas;
   }
 
@@ -72,6 +82,25 @@ export class AppDataRuntime {
       });
     }
     return this.backupService;
+  }
+
+  /** 可读导出服务（S4-2）：懒装配；产物与备份分目录（exports/ vs backups/），导出 ≠ 备份 */
+  getExportService(appVersion: string): ExportService {
+    if (this.exportService === undefined) {
+      this.exportService = new ExportService({
+        notes: this.notes,
+        blobs: this.blobs,
+        cas: this.blobCas,
+        records: this.exportRecords,
+        fs: new SandboxFileStore(),
+        clock: this.clock,
+        random: this.random,
+        logger: this.logger,
+        root: this.filesDir,
+        appVersion,
+      });
+    }
+    return this.exportService;
   }
 
   static isReady(): boolean {
@@ -122,9 +151,11 @@ export class AppDataRuntime {
     const search: SearchRepository = new SearchRepository({ db: executor });
     const inbox: InboxRepository = new InboxRepository({ db: executor, logger });
     const blobs: BlobRepository = new BlobRepository({ db: executor, logger });
+    const mcpAudit: McpAuditRepository = new McpAuditRepository(executor);
+    const exportRecords: ExportRecordRepository = new ExportRecordRepository(executor);
     const blobCas: BlobCas = new BlobCas(context.filesDir, new SandboxFileStore(), hasher, logger, random);
 
-    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, search, inbox, blobs, blobCas, context.filesDir, clock, random, hasher, logger);
+    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, search, inbox, blobs, mcpAudit, exportRecords, blobCas, context.filesDir, clock, random, hasher, logger);
     runtime.recoveryReport = await runStartupRecovery({ blobRepository: blobs, blobCas, logger });
     // 收件箱保留期清理（S2-2，设计 §4.1）：启动即清，不依赖用户是否打开收件箱页
     const purged: number = await inbox.purgeExpired(clock.nowMs());

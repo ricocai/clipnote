@@ -1,47 +1,29 @@
 /**
- * speech（HAR）：离线朗读。
+ * speech（HAR）：离线朗读。S5-1 已交付系统离线 TTS 引擎实现（TTS-0，设计 §4.6）。
  *
- * **本期（V0.1）刻意不实现合成**，原因是设计 §4.6 的渐进路线把 TTS-0（系统离线引擎 PoC）
- * 置于 G4 门槛之后：断网可用性、音色清单、长文表现、中断语义、后台资格都必须先有真机证据，
- * 否则实现出来的只是"能跑但不知道能不能用"的代码。
+ * **进度口径（S5-1 后）**：`ITtsEngine` 冻结接口的实现已落地——
+ * 系统引擎适配（core/engine.ts + adapters/system-tts-driver.ets）、
+ * capability 探测（不可用显式禁用，绝不静默转在线）、init/speak/stop/pause/resume/release
+ * 全生命周期状态机、generation 代际取消、音色/语速持久化
+ * （adapters/preferences-settings-store.ets）。pause/resume 按 G4 探测方案 A
+ * （stop+新代际续读）实现，不抬 API 基线。
  *
- * 本文件只冻结**接口边界**，让 UI 与领域层可以先按此依赖，G4 通过后填充实现而不改动调用方。
+ * 分层纪律（同 common/mcp）：`./src/main/ets/core/*` 零 @kit.*，本机 node 全量验证；
+ * @kit.* 只允许出现在 `./src/main/ets/adapters/`。UI 只依赖本文件导出的符号。
+ *
+ * **仍未实现（真机/G4 项）**：playType=0 PCM 音频流与 AudioRenderer 播放管线
+ * （段内进度高亮、背压）、断网/长时/音频焦点真机联验——见 tools/report/g4-tts-probe.md §5。
  */
 
-import { SpeechSegment } from 'common';
+// ---- 契约（S5-1 前冻结；对外导入路径不变） ----
+export * from './src/main/ets/core/contract';
 
-/** 引擎能力探测结果；`available=false` 时 UI 必须显式提示或禁用，不得静默转在线（设计 §4.6） */
-export interface TtsEngineCapability {
-  readonly available: boolean;
-  readonly engineName: string;
-  readonly offline: boolean;
-  readonly voiceCount: number;
-  readonly reason?: string;
-}
+// ---- 引擎内核（零 @kit.*，本机可测） ----
+export * from './src/main/ets/core/settings';
+export * from './src/main/ets/core/driver';
+export * from './src/main/ets/core/engine';
+export * from './src/main/ets/core/testing';
 
-export interface TtsSpeakRequest {
-  readonly segment: SpeechSegment;
-  /**
-   * 代际 ID。切段 / 换音色 / 暂停 / 停止 / 来电中断时必须自增，
-   * 引擎线程凭此丢弃旧任务样本，避免"上一段音频继续播放"（设计 §4.6）。
-   */
-  readonly generation: number;
-  readonly speed: number;
-}
-
-export interface TtsCallbacks {
-  onReady(generation: number): void;
-  onProgress(generation: number, playedChars: number): void;
-  onError(generation: number, reason: string): void;
-}
-
-/** 平台 TTS 引擎抽象。系统离线引擎与 sherpa-onnx 端侧模型共用此接口（TTS-0 / TTS-1）。 */
-export interface ITtsEngine {
-  capability(): Promise<TtsEngineCapability>;
-  init(): Promise<void>;
-  speak(request: TtsSpeakRequest, callbacks: TtsCallbacks): Promise<void>;
-  stop(generation: number): Promise<void>;
-  pause(generation: number): Promise<void>;
-  resume(generation: number): Promise<void>;
-  release(): Promise<void>;
-}
+// ---- 鸿蒙适配（@kit.* 只允许出现在 adapters/） ----
+export { SystemTtsDriver } from './src/main/ets/adapters/system-tts-driver';
+export { PreferencesTtsSettingsStore } from './src/main/ets/adapters/preferences-settings-store';

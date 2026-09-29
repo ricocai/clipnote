@@ -14,7 +14,7 @@
  *  - DDL 一律 `IF NOT EXISTS`，保证重复执行安全。
  */
 
-export const DB_SCHEMA_VERSION: number = 3;
+export const DB_SCHEMA_VERSION: number = 4;
 
 export interface Migration {
   readonly version: number;
@@ -159,7 +159,30 @@ const MIGRATION_V2: readonly string[] = [
 ];
 
 /**
- * V3：导出记录表（S4-2；issue WHY-102「系统分享交接与导出记录」）。
+ * V3：MCP 审计表（S6-1；设计 §4.5.5）。
+ *
+ * 审计纪律（勿破坏）：只记元数据 —— 客户端、工具、对象 ID、结果、时间与
+ * 载荷字节数；**不记正文、不记令牌**（令牌/正文进库会把审计表变成数据泄露面）。
+ * `object_ids` 以 JSON 数组文本存储（仅对象 ID 列表，属元数据）。
+ */
+const MIGRATION_V3: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS mcp_audit (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     client_id TEXT NOT NULL,
+     tool TEXT NOT NULL,
+     object_ids TEXT NOT NULL,
+     result TEXT NOT NULL,
+     at_ms INTEGER NOT NULL,
+     payload_bytes INTEGER NOT NULL
+   )`,
+  // 审计查询页主路径：按时间倒序翻页
+  `CREATE INDEX IF NOT EXISTS idx_mcp_audit_at ON mcp_audit (at_ms)`,
+  // 按客户端追溯其行为序列
+  `CREATE INDEX IF NOT EXISTS idx_mcp_audit_client ON mcp_audit (client_id, at_ms)`,
+];
+
+/**
+ * V4：导出记录表（S4-2；issue WHY-102「系统分享交接与导出记录」）。
  *
  * 口径：
  *  - 记录的是**可读导出**事件（MD/HTML + 附件 ZIP），与可恢复备份（S4-1）是两条路径，
@@ -168,7 +191,7 @@ const MIGRATION_V2: readonly string[] = [
  *  - 不进备份快照（BackupRepository.snapshot 只搬笔记域），恢复后导出历史不随迁
  *    —— 导出产物本身是迁出物，历史记录属本机运行痕迹。
  */
-const MIGRATION_V3: readonly string[] = [
+const MIGRATION_V4: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS export_record (
      id TEXT PRIMARY KEY,
      kind TEXT NOT NULL,
@@ -185,5 +208,6 @@ const MIGRATION_V3: readonly string[] = [
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'init', statements: MIGRATION_V1 },
   { version: 2, name: 'note_fts_trigram', statements: MIGRATION_V2 },
-  { version: 3, name: 'export_record', statements: MIGRATION_V3 },
+  { version: 3, name: 'mcp_audit', statements: MIGRATION_V3 },
+  { version: 4, name: 'export_record', statements: MIGRATION_V4 },
 ];

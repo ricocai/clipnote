@@ -25,6 +25,8 @@ export * from './src/main/ets/core/speech';
 export * from './src/main/ets/core/backup';
 export * from './src/main/ets/core/zip';
 export * from './src/main/ets/core/backup-service';
+export * from './src/main/ets/core/export';
+export * from './src/main/ets/core/export-service';
 export * from './src/main/ets/core/search/tokenizer';
 export * from './src/main/ets/core/search/inverted-index';
 
@@ -35,7 +37,9 @@ export * from './src/main/ets/core/data/note-repository';
 export * from './src/main/ets/core/data/search-repository';
 export * from './src/main/ets/core/data/inbox-repository';
 export * from './src/main/ets/core/data/blob-repository';
+export * from './src/main/ets/core/data/mcp-audit-repository';
 export * from './src/main/ets/core/data/backup-repository';
+export * from './src/main/ets/core/data/export-record-repository';
 export * from './src/main/ets/core/data/recovery';
 
 export { SystemClock } from './src/main/ets/adapters/system-clock';
@@ -47,4 +51,5 @@ export { AppContextHolder } from './src/main/ets/adapters/app-context';
 export { RelationalStoreExecutor, DEFAULT_DB_NAME } from './src/main/ets/adapters/relational-store';
 export { AppDataRuntime } from './src/main/ets/adapters/app-database';
 export { SystemPasteboardProbe } from './src/main/ets/adapters/pasteboard-probe';
+export { SystemShareHandoff } from './src/main/ets/adapters/system-share';
 export { DevicePermissionStatus } from './src/main/ets/adapters/device-permissions';
