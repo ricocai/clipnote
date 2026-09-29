@@ -26,8 +26,16 @@ export class AppContextHolder {
   static cacheDir(): string {
     const ctx: common.UIAbilityContext | undefined = AppContextHolder.context;
     if (ctx === undefined) {
-      throw new Error('AppContextHolder: context not set; call set() in EntryAbility.onCreate');
+      throw new Error('AppContextHolder: cacheDir unavailable; context not set');
     }
     return ctx.cacheDir;
+  }
+
+  /**
+   * 只读上下文引用（S2-4：设置页跳系统设置等 UI 毗邻行为）。
+   * 拿不到返回 undefined 而不是抛错 —— 调用方必须准备"跳转失败"的诚实降级。
+   */
+  static get(): common.UIAbilityContext | undefined {
+    return AppContextHolder.context;
   }
 }

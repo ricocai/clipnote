@@ -265,11 +265,11 @@ async function openAuditRepo(): Promise<{ db: NodeSqliteExecutor; repo: McpAudit
   return { db, repo: new McpAuditRepository(db) };
 }
 
-test('audit: schema v2 建立 mcp_audit 表并随迁移链路到达最新版本', async () => {
+test('audit: schema v3 建立 mcp_audit 表并随迁移链路到达最新版本', async () => {
   const db = NodeSqliteExecutor.openMemory();
   const version: number = await new SchemaMigrator(db, new CapturingLogger()).migrate();
   assert.equal(version, DB_SCHEMA_VERSION);
-  assert.equal(DB_SCHEMA_VERSION, 2);
+  assert.equal(DB_SCHEMA_VERSION, 3);
   const tables = await db.query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mcp_audit'`);
   assert.equal(tables.length, 1);
   const idx = await db.query(

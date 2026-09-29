@@ -38,6 +38,44 @@ export interface IMarkdownTokenizer {
   parse(source: string): MdToken[];
 }
 
+/**
+ * 把 ArkWeb 桥接返回的 token JSON 还原为 MdToken[]。
+ *
+ * 桥接 Schema（设计 §4.3）：ArkWeb 内的 reader.js 用 markdown-it 解析后，
+ * 只序列化 MdToken 声明的字段（type/tag/nesting/map/level/content/markup/info/children/attrs），
+ * 经 runJavaScript 回调把 JSON 字符串传回 ArkTS。本函数做 JSON.parse + 结构校验，
+ * 字段缺失时给缺省值而不是抛错 —— 桥接两侧版本演进时，新增字段被忽略、缺失字段可容忍。
+ */
+export function mdTokensFromJson(payload: string): MdToken[] {
+  const parsed: unknown = JSON.parse(payload);
+  if (!Array.isArray(parsed)) {
+    throw new Error('mdTokensFromJson: bridge payload is not an array');
+  }
+  return parsed.map((t: unknown) => convertToken(t));
+}
+
+function convertToken(raw: unknown): MdToken {
+  const t: Record<string, unknown> = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const children: unknown = t['children'];
+  const attrs: unknown = t['attrs'];
+  const map: unknown = t['map'];
+  const token: MdToken = {
+    type: typeof t['type'] === 'string' ? (t['type'] as string) : '',
+    tag: typeof t['tag'] === 'string' ? (t['tag'] as string) : '',
+    nesting: typeof t['nesting'] === 'number' ? (t['nesting'] as number) : 0,
+    map: Array.isArray(map) && map.length >= 2 ? [Number(map[0]), Number(map[1])] : null,
+    level: typeof t['level'] === 'number' ? (t['level'] as number) : 0,
+    content: typeof t['content'] === 'string' ? (t['content'] as string) : '',
+    markup: typeof t['markup'] === 'string' ? (t['markup'] as string) : '',
+    info: typeof t['info'] === 'string' ? (t['info'] as string) : '',
+    children: Array.isArray(children) ? children.map((c: unknown) => convertToken(c)) : null,
+  };
+  if (Array.isArray(attrs)) {
+    return { ...token, attrs: attrs as string[][] };
+  }
+  return token;
+}
+
 /** 附件引用协议前缀：`attachment://<sha256>` */
 export const ATTACHMENT_SCHEME: string = 'attachment://';
 

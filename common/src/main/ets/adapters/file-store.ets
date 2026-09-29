@@ -46,6 +46,27 @@ export class SandboxFileStore implements IFileStore {
     return fs.readTextSync(path);
   }
 
+  async writeRawBytes(path: string, data: Uint8Array): Promise<void> {
+    const file: fs.File = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+    try {
+      fs.writeSync(file.fd, data.buffer);
+    } finally {
+      fs.closeSync(file);
+    }
+  }
+
+  async readBytes(path: string): Promise<Uint8Array> {
+    const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
+    try {
+      const stat: fs.Stat = fs.fstatSync(file.fd);
+      const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
+      fs.readSync(file.fd, buffer);
+      return new Uint8Array(buffer);
+    } finally {
+      fs.closeSync(file);
+    }
+  }
+
   async rename(fromPath: string, toPath: string): Promise<void> {
     fs.renameSync(fromPath, toPath);
   }

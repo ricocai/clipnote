@@ -1,9 +1,11 @@
 import { common } from '@kit.AbilityKit';
 import { IClock, IHasher, ILogger, IRandom, LogLevel } from '../core/ports';
 import { BlobCas } from '../core/blob-cas';
+import { BackupService } from '../core/backup-service';
 import { IRdbExecutor } from '../core/data/rdb';
 import { SchemaMigrator } from '../core/data/migrator';
 import { NoteRepository } from '../core/data/note-repository';
+import { SearchRepository } from '../core/data/search-repository';
 import { InboxRepository } from '../core/data/inbox-repository';
 import { BlobRepository } from '../core/data/blob-repository';
 import { McpAuditRepository } from '../core/data/mcp-audit-repository';
@@ -27,26 +29,53 @@ export class AppDataRuntime {
 
   readonly executor: IRdbExecutor;
   readonly notes: NoteRepository;
+  readonly search: SearchRepository;
   readonly inbox: InboxRepository;
   readonly blobs: BlobRepository;
   readonly mcpAudit: McpAuditRepository;
   readonly blobCas: BlobCas;
   recoveryReport: StartupRecoveryReport | undefined = undefined;
 
+  private backupService: BackupService | undefined = undefined;
+
   private constructor(
     executor: IRdbExecutor,
     notes: NoteRepository,
+    search: SearchRepository,
     inbox: InboxRepository,
     blobs: BlobRepository,
     mcpAudit: McpAuditRepository,
     blobCas: BlobCas,
+    private readonly filesDir: string,
+    private readonly clock: IClock,
+    private readonly random: IRandom,
+    private readonly hasher: IHasher,
+    private readonly logger: ILogger,
   ) {
     this.executor = executor;
     this.notes = notes;
+    this.search = search;
     this.inbox = inbox;
     this.blobs = blobs;
     this.mcpAudit = mcpAudit;
     this.blobCas = blobCas;
+  }
+
+  /** 备份/恢复服务（S4-1）：懒装配，与启动恢复扫描共用同一套 CAS 与执行器 */
+  getBackupService(appVersion: string): BackupService {
+    if (this.backupService === undefined) {
+      this.backupService = new BackupService({
+        db: this.executor,
+        fs: new SandboxFileStore(),
+        hasher: this.hasher,
+        clock: this.clock,
+        random: this.random,
+        logger: this.logger,
+        root: this.filesDir,
+        appVersion,
+      });
+    }
+    return this.backupService;
   }
 
   static isReady(): boolean {
@@ -94,12 +123,13 @@ export class AppDataRuntime {
     await new SchemaMigrator(executor, logger).migrate();
 
     const notes: NoteRepository = new NoteRepository({ db: executor, clock, random, logger });
+    const search: SearchRepository = new SearchRepository({ db: executor });
     const inbox: InboxRepository = new InboxRepository({ db: executor, logger });
     const blobs: BlobRepository = new BlobRepository({ db: executor, logger });
     const mcpAudit: McpAuditRepository = new McpAuditRepository(executor);
     const blobCas: BlobCas = new BlobCas(context.filesDir, new SandboxFileStore(), hasher, logger, random);
 
-    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, inbox, blobs, mcpAudit, blobCas);
+    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, search, inbox, blobs, mcpAudit, blobCas, context.filesDir, clock, random, hasher, logger);
     runtime.recoveryReport = await runStartupRecovery({ blobRepository: blobs, blobCas, logger });
     // 收件箱保留期清理（S2-2，设计 §4.1）：启动即清，不依赖用户是否打开收件箱页
     const purged: number = await inbox.purgeExpired(clock.nowMs());

@@ -57,8 +57,7 @@ export interface Note {
   readonly content: string;
 }
 
-function buildCorpus(size: number, seed: number): Note[] {
-  const rnd = new Lcg(seed);
+export function buildCorpus(size: number, seed: number): Note[] {  const rnd = new Lcg(seed);
   const notes: Note[] = [];
   for (let i = 0; i < size; i++) {
     const wordCount = rnd.int(20, 60);
@@ -200,12 +199,12 @@ function detectCapabilities(db: DatabaseSync): CapabilityReport {
 // 查询集
 // ---------------------------------------------------------------------------
 
-interface QueryCase {
+export interface QueryCase {
   readonly label: string;
   readonly query: string;
 }
 
-function buildQuerySet(notes: readonly Note[]): QueryCase[] {
+export function buildQuerySet(notes: readonly Note[]): QueryCase[] {
   const cases: QueryCase[] = [
     { label: '单字（CJK 1 码点）', query: '笔' },
     { label: '双字', query: '笔记' },

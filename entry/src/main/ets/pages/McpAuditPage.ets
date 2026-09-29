@@ -7,7 +7,7 @@ import {
 } from 'common';
 
 /**
- * 设置页（首期只承载 MCP 审计查询，S6-1；设计 §4.5.5）。
+ * MCP 访问审计查询页（S6-1；设计 §4.5.5；设置页子页）。
  *
  * 审计展示纪律与落库一致：只展示元数据（客户端、工具、对象 ID、结果、时间、
  * 载荷字节数），不存在正文入口 —— 审计页本身不得成为数据泄露面。
@@ -70,7 +70,7 @@ function toRow(e: McpAuditEntry): AuditRow {
 
 @Entry
 @Component
-struct SettingsPage {
+struct McpAuditPage {
   @State rows: AuditRow[] = [];
   @State total: number = 0;
   @State filter: ResultFilter = 'all';

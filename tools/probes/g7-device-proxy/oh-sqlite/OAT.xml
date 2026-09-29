@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2021 Huawei Device Co., Ltd.
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+     
+     Notes:
+     This is project config file for OpenHarmony OSS Audit Tool, if you have any questions or concerns, please email chenyaxun.
+-->
+<!-- OAT(OSS Audit Tool) configuration guide:
+basedir: Root dir, the basedir + project path is the real source file location.
+licensefile: 
+1.If the project don't have "LICENSE" in root dir, please define all the license files in this project in , OAT will check license files according to this rule.
+
+tasklist(only for batch mode):
+1. task: Define oat check thread, each task will start a new thread.
+2. task name: Only an name, no practical effect.
+3. task policy: Default policy for projects under this task, this field is required and the specified policy must defined in policylist.
+4. task filter: Default filefilter for projects under this task, this field is required and the specified filefilter must defined in filefilterlist.
+5. task project: Projects to be checked, the path field define the source root dir of the project.
+
+
+policyList:
+1. policy: All policyitems will be merged to default OAT.xml rules, the name of policy doesn't affect OAT check process.
+2. policyitem: The fields type, name, path, desc is required, and the fields rule, group, filefilter is optional,the default value is:
+<policyitem type="" name="" path="" desc="" rule="may" group="defaultGroup" filefilter="defaultPolicyFilter"/>
+3. policyitem type:
+    "compatibility" is used to check license compatibility in the specified path; 
+    "license" is used to check source license header in the specified path;
+    "copyright" is used to check source copyright header in the specified path;
+    "import" is used to check source dependency in the specified path, such as import ... ,include ...
+    "filetype" is used to check file type in the specified path, supported file types: archive, binary
+    "filename" is used to check whether the specified file exists in the specified path(support projectroot in default OAT.xml), supported file names: LICENSE, README, README.OpenSource
+
+4. policyitem name: This field is used for define the license, copyright, "*" means match all, the "!" prefix means could not match this value. For example, "!GPL" means can not use GPL license. 
+5. policyitem path: This field is used for define the source file scope to apply this policyitem, the "!" prefix means exclude the files. For example, "!.*/lib/.*" means files in lib dir will be exclude while process this policyitem.
+6. policyitem rule and group: These two fields are used together to merge policy results. "may" policyitems in the same group means any one in this group passed, the result will be passed.
+7. policyitem filefilter: Used to bind filefilter which define filter rules.
+8. filefilter: Filter rules, the type filename is used to filter file name, the type filepath is used to filter file path.
+
+Note:If the text contains special characters, please escape them according to the following rules:
+" == &gt;
+& == &gt;
+' == &gt;
+< == &gt;
+> == &gt;
+-->
+<configuration>
+	<oatconfig>
+		<licensefile>LICENSE</licensefile>
+		<policylist>
+			<policy name="projectPolicy" desc="">
+				<policyitem type="compatibility" name="Public Domain" path=".*" desc="兼容license"/>
+			</policy>
+		</policylist>
+		<licensematcherlist>
+			<licensematcher name="Public Domain" desc="If the scanning result is InvalidLicense, you can define matching rules here. Note that quotation marks must be escaped.">
+				<licensetext name="
+					# Copyright (c) Huawei Technologies Co., Ltd. 2019-2019. All rights reserved.
+				" desc=""/>
+				<licensetext name="
+					SQLite Is Public Domain
+
+					All of the code and documentation in SQLite has been dedicated to the public domain by the authors. All code authors, and representatives of the companies they work for, have signed affidavits dedicating their contributions to the public domain and originals of those signed affidavits are stored in a firesafe at the main offices of Hwaci. Anyone is free to copy, modify, publish, use, compile, sell, or distribute the original SQLite code, either in source code form or as a compiled binary, for any purpose, commercial or non-commercial, and by any means.
+
+					The previous paragraph applies to the deliverable code and documentation in SQLite - those parts of the SQLite library that you actually bundle and ship with a larger application. Some scripts used as part of the build process (for example the &gt; configure &gt; scripts generated by autoconf) might fall under other open-source licenses. Nothing from these build scripts ever reaches the final deliverable SQLite library, however, and so the licenses associated with those scripts should not be a factor in assessing your rights to copy and use the SQLite library.
+
+					All of the deliverable code in SQLite has been written from scratch. No code has been taken from other projects or from the open internet. Every line of code can be traced back to its original author, and all of those authors have public domain dedications on file. So the SQLite code base is clean and is uncontaminated with licensed code from other projects.
+
+					Open-Source, not Open-Contribution
+
+					SQLite is open-source, meaning that you can make as many copies of it as you want and do whatever you want with those copies, without limitation. But SQLite is not open-contribution. In order to keep SQLite in the public domain and ensure that the code does not become contaminated with proprietary or licensed content, the project does not accept patches from unknown persons.
+
+					All of the code in SQLite is original, having been written specifically for use by SQLite. No code has been copied from unknown sources on the internet.
+
+					Warranty of Title
+
+					SQLite is in the public domain and does not require a license. Even so, some organizations want legal proof of their right to use SQLite. Circumstances where this occurs include the following:
+
+					Your company desires indemnity against claims of copyright infringement.
+					You are using SQLite in a jurisdiction that does not recognize the public domain.
+					You are using SQLite in a jurisdiction that does not recognize the right of an author to dedicate their work to the public domain.
+					You want to hold a tangible legal document as evidence that you have the legal right to use and distribute SQLite.
+					Your legal department tells you that you have to purchase a license.
+					If any of the above circumstances apply to you, Hwaci, the company that employs all the developers of SQLite, will sell you a Warranty of Title for SQLite. A Warranty of Title is a legal document that asserts that the claimed authors of SQLite are the true authors, and that the authors have the legal right to dedicate the SQLite to the public domain, and that Hwaci will vigorously defend against challenges to those claims. All proceeds from the sale of SQLite Warranties of Title are used to fund continuing improvement and support of SQLite.
+
+					Contributed Code
+
+					In order to keep SQLite completely free and unencumbered by copyright, the project does not accept patches. If you would like to make a suggested change, and include a patch as a proof-of-concept, that would be great. However please do not be offended if we rewrite your patch from scratch.
+				" desc=""/>
+			</licensematcher>
+		</licensematcherlist>
+		<filefilterlist>
+			<filefilter name="defaultFilter" desc="Files not to check">
+			</filefilter>
+		</filefilterlist>
+	</oatconfig>
+</configuration>

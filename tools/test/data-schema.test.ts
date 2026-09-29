@@ -61,15 +61,15 @@ test('schema: 版本跳号直接报错（防发布漏带迁移）', async () => 
   db.close();
 });
 
-test('schema: 增量迁移在上一版本之上应用（v3 加列）', async () => {
+test('schema: 增量迁移在上一版本之上应用（v4 加列）', async () => {
   const db = NodeSqliteExecutor.openMemory();
-  const v3: readonly Migration[] = [
+  const v4: readonly Migration[] = [
     ...MIGRATIONS,
-    { version: 3, name: 'add_mood', statements: [`ALTER TABLE note ADD COLUMN mood TEXT`] },
+    { version: 4, name: 'add_mood', statements: [`ALTER TABLE note ADD COLUMN mood TEXT`] },
   ];
-  const migrator = new SchemaMigrator(db, logger, v3);
+  const migrator = new SchemaMigrator(db, logger, v4);
 
-  assert.equal(await migrator.migrate(), 3);
+  assert.equal(await migrator.migrate(), 4);
   const cols = await db.query(`SELECT name FROM pragma_table_info('note')`);
   const names = cols.map((r) => reqString(r, 'name'));
   assert.ok(names.includes('mood'));
