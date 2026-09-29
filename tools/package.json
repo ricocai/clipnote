@@ -14,6 +14,7 @@
     "probe:g7-regression": "tsc -p tsconfig.json && node --experimental-sqlite dist/tools/probes/g7-regression.js",
     "probe:md-reader": "tsc -p tsconfig.json && node dist/tools/probes/md-reader-perf.js",
     "drill:g5": "tsc -p tsconfig.json && node --experimental-sqlite dist/tools/probes/g5-restore-drill.js",
+    "probe:g4": "tsc -p tsconfig.json && node dist/tools/probes/g4-readaloud-verify.js",
     "pretest": "node ./test/support/prepare-test.js"
   },
   "dependencies": {
