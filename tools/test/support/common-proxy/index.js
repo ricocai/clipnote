@@ -1,0 +1,16 @@
+/**
+ * node 运行期 'common' 垫片（tsc 编译产物的重导出）。
+ *
+ * tools/tsconfig.json 的 paths 只解决**编译期**裸导入 'common'；本文件解决
+ * **运行期** require('common')（tsc 对值导入不会在产物里改写路径）。
+ * 与 tools/test/support/common-shim.ts（编译期镜像）保持同源：
+ * 只重导出 node 可运行的 common core 子集，避开含 @kit.* 的 adapters/。
+ *
+ * 由 tools/test/support/prepare-test.js 在 npm test 前软链到
+ * tools/node_modules/common（npm ci 会清掉 node_modules，故每次测试前重建）。
+ */
+
+module.exports = {
+  ...require('../../../dist/common/src/main/ets/core/speech.js'),
+  ...require('../../../dist/common/src/main/ets/core/model.js'),
+};

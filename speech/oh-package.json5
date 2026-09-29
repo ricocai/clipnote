@@ -1,7 +1,7 @@
 {
   "name": "speech",
   "version": "0.1.0",
-  "description": "离线朗读（TTS）。S5-1 已交付系统离线引擎实现（ITtsEngine 全生命周期 + 代际取消 + 音色/语速持久化）；PCM 播放管线与真机联验属 G4 后续项。",
+  "description": "离线朗读（TTS）。S5-1 系统离线引擎（ITtsEngine 全生命周期 + 代际取消 + 音色/语速持久化）；S5-2 播放主链路（段规划/有界队列/播放控制器/AVSession 播控）。PCM 播放管线与真机联验属 G4 后续项。",
   "main": "Index.ets",
   "author": "",
   "license": "Apache-2.0",

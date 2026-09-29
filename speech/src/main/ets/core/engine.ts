@@ -142,12 +142,14 @@ export class SystemTtsEngine implements ITtsEngine {
     if (this.stateValue === 'unavailable') {
       throw new Error(`系统 TTS 不可用：${this.cap?.reason ?? '未知原因'}`);
     }
-    await this.ensureEngine();
     if (request.generation <= this.lastGeneration) {
       throw new Error(
         `generation ${request.generation} 未自增（last=${this.lastGeneration}）——代际取消语义要求严格递增（设计 §4.6）`,
       );
     }
+    // 登记必须**先于一切 await**：调用方 fire-and-forget 播放（S5-2 控制器）时，
+    // stop/pause/换代际可能在 speak 首个 await 前的微任务窗口到达——晚登记会让
+    // stop 扑空（active 尚 undefined）、驱动样本成孤儿（实测暴露，S5-2 修复）。
     if (this.active !== undefined) {
       // 新代际说话：废弃在播样本（取消是正常路径，resolve 而非 reject）
       this.cancelActive();
@@ -166,14 +168,34 @@ export class SystemTtsEngine implements ITtsEngine {
     this.stateValue = 'speaking';
     await new Promise<void>((resolve: () => void, reject: (err: Error) => void): void => {
       this.pending.set(requestId, { generation: request.generation, resolve, reject });
-      this.driver.speak({ requestId, text: request.segment.text }).catch((err: Error) => {
-        // 引擎连请求都未接受：本地结算，等 listener 只会更糟
-        if (this.pending.delete(requestId)) {
-          this.active = undefined;
-          this.stateValue = 'idle';
-          reject(err instanceof Error ? err : new Error(String(err)));
-        }
-      });
+      this.ensureEngine()
+        .then((): void => {
+          const completion: PendingCompletion | undefined = this.pending.get(requestId);
+          if (completion === undefined) {
+            return; // ensureEngine 期间已被 stop/pause/换代际结算（正常取消）
+          }
+          if (this.active === undefined || this.active.requestId !== requestId) {
+            // 防御：pending 未结算但样本已不在 active（不应出现，兜底按取消结算）
+            this.pending.delete(requestId);
+            completion.resolve();
+            return;
+          }
+          this.driver.speak({ requestId, text: request.segment.text }).catch((err: Error) => {
+            // 引擎连请求都未接受：本地结算，等 listener 只会更糟
+            if (this.pending.delete(requestId)) {
+              this.active = undefined;
+              this.stateValue = 'idle';
+              reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          });
+        })
+        .catch((err: unknown): void => {
+          if (this.pending.delete(requestId)) {
+            this.active = undefined;
+            this.stateValue = 'idle';
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        });
     });
   }
 
