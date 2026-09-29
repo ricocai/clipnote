@@ -14,7 +14,7 @@
  *  - DDL 一律 `IF NOT EXISTS`，保证重复执行安全。
  */
 
-export const DB_SCHEMA_VERSION: number = 3;
+export const DB_SCHEMA_VERSION: number = 4;
 
 export interface Migration {
   readonly version: number;
@@ -181,8 +181,33 @@ const MIGRATION_V3: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_mcp_audit_client ON mcp_audit (client_id, at_ms)`,
 ];
 
+/**
+ * V4：导出记录表（S4-2；issue WHY-102「系统分享交接与导出记录」）。
+ *
+ * 口径：
+ *  - 记录的是**可读导出**事件（MD/HTML + 附件 ZIP），与可恢复备份（S4-1）是两条路径，
+ *    表结构刻意不含任何可恢复语义（无 manifest、无 blob 摘要）——导出 ≠ 备份（V1.4 F06）；
+ *  - 只记元数据（范围/篇数/字节数/产物路径/时间），不记正文（§4.5.5 审计口径）；
+ *  - 不进备份快照（BackupRepository.snapshot 只搬笔记域），恢复后导出历史不随迁
+ *    —— 导出产物本身是迁出物，历史记录属本机运行痕迹。
+ */
+const MIGRATION_V4: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS export_record (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL,
+     format TEXT NOT NULL,
+     note_count INTEGER NOT NULL,
+     blob_count INTEGER NOT NULL,
+     total_bytes INTEGER NOT NULL,
+     file_path TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_export_record_created ON export_record (created_at)`,
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'init', statements: MIGRATION_V1 },
   { version: 2, name: 'note_fts_trigram', statements: MIGRATION_V2 },
   { version: 3, name: 'mcp_audit', statements: MIGRATION_V3 },
+  { version: 4, name: 'export_record', statements: MIGRATION_V4 },
 ];
