@@ -15,7 +15,7 @@ import { NoteRepository } from '../../common/src/main/ets/core/data/note-reposit
 import { SearchRepository } from '../../common/src/main/ets/core/data/search-repository';
 import { BlobRepository } from '../../common/src/main/ets/core/data/blob-repository';
 import { NoteService } from '../../common/src/main/ets/core/notes';
-import { MAX_IMAGE_ATTACHMENTS_PER_NOTE } from '../../common/src/main/ets/core/notes';
+import { MAX_IMAGE_ATTACHMENT_BYTES, MAX_IMAGE_ATTACHMENTS_PER_NOTE } from '../../common/src/main/ets/core/notes';
 import { BlobCas, blobRelativePath } from '../../common/src/main/ets/core/blob-cas';
 import { AttachmentRole, BlobStatus } from '../../common/src/main/ets/core/model';
 import { NodeSqliteExecutor } from './support/sqlite-executor';
@@ -239,4 +239,16 @@ test('importImage：达到附件上限后拒绝而不是静默丢弃', async () 
     () => f.svc.importImage(note.id, pngBytes(21), 'image/png'),
     /exceed limit/,
   );
+});
+
+test('importImage：超大字节（>32MB 分享同一口径）在入 CAS 之前拒绝且零副作用', async () => {
+  const f = await makeFixture();
+  const note = await f.svc.save({ title: 't', contentMd: 'c' });
+  const oversized = new Uint8Array(MAX_IMAGE_ATTACHMENT_BYTES + 1);
+  await assert.rejects(
+    () => f.svc.importImage(note.id, oversized, 'image/png'),
+    /too large/,
+  );
+  assert.equal(f.fs.allPaths().length, 0, '超限字节不得落盘');
+  assert.deepEqual(await f.svc.listAttachmentsOf(note.id), [], '不得留下附件引用');
 });

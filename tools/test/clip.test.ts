@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classify, ClipIngestService, SensitivityDetector } from '../../common/src/main/ets/core/clip';
+import { classify, ClipIngestService, HARD_REJECT_BYTES, SensitivityDetector } from '../../common/src/main/ets/core/clip';
 import {
   ClipEntry,
   ClipKind,
@@ -185,6 +185,19 @@ test('空内容被拒绝', async () => {
   const out = await svc.ingest({ text: '   \n\t ', entry: ClipEntry.MANUAL });
   assert.equal(out.decision, IngestDecision.REJECT);
   assert.ok(out.reasons.includes('empty_content'));
+});
+
+test('超大内容（超过 16MB 硬上限）拒绝落盘，不截断不驻留正文', async () => {
+  const clock = new FixedClock(T0);
+  const { svc, logger } = makeService(clock);
+  const text = 'a'.repeat(HARD_REJECT_BYTES + 1);
+  const out = await svc.ingest({ text, entry: ClipEntry.MANUAL });
+  assert.equal(out.decision, IngestDecision.REJECT);
+  assert.equal(out.item.state, InboxState.DISCARDED);
+  assert.equal(out.item.rawText, '', '硬拒绝不得携带正文');
+  assert.equal(out.item.originalByteLength, HARD_REJECT_BYTES + 1);
+  assert.ok(out.reasons.includes('exceeds_hard_limit'));
+  assert.ok(logger.has('clip_ingest_rejected'));
 });
 
 test('摘要基于原始正文，规范化不参与摘要', async () => {

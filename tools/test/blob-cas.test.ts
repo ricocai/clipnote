@@ -124,3 +124,22 @@ test('AtomicWriter 校验失败（内容回读不一致）时不改名', async (
   assert.equal(await fs.exists('sandbox/y.txt'), false);
   assert.ok(logger.has('atomic_write_failed'));
 });
+
+test('并发原子写同一目标：结果必为某一写者的完整内容（无撕裂、无混合）', async () => {
+  const fs = new MemoryFileStore();
+  const logger = new CapturingLogger();
+  const writer = new AtomicWriter(fs, new SequentialRandom(), logger);
+  const payloadA = 'A'.repeat(10000);
+  const payloadB = 'B'.repeat(10000);
+  // 两个写者交叉推进（Promise 先全部创建再 await）：rename 原子点之后
+  // 读者只能看到其中一方的完整内容
+  await Promise.all([
+    writer.write('sandbox/target.txt', payloadA),
+    writer.write('sandbox/target.txt', payloadB),
+  ]);
+  const final = await fs.readText('sandbox/target.txt');
+  assert.ok(
+    final === payloadA || final === payloadB,
+    `不得出现混合/截断内容（实际长度 ${final.length}）`,
+  );
+});

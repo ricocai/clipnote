@@ -8,7 +8,26 @@
  *
  * revision 口径（设计 §4.8 同步预留）：任何会改变同步语义状态的修改
  * （正文 / 标题 / 置顶 / 删除 / 恢复）都递增 revision 并刷新 updated_at。
+ *
+ * 并发写入口径（S4-3 安全审计）：正文/标题更新接受可选 expectedRevision，
+ * 提供方在事务内先校验 revision 再写入，不匹配即抛 NoteConflictError ——
+ * 并发写入冲突必须**如实报错**，不得静默互相覆盖（负向用例口径）。
  */
+
+/** 并发写入冲突：调用方持有的 revision 与库内现状不符（或笔记已被删除） */
+export class NoteConflictError extends Error {
+  constructor(
+    readonly noteId: NoteId,
+    readonly expectedRevision: number,
+    readonly actualRevision: number | undefined,
+  ) {
+    super(
+      `NoteRepository: concurrent modification of note ${noteId} ` +
+        `(expected revision ${expectedRevision}, actual ${actualRevision === undefined ? 'deleted' : actualRevision})`,
+    );
+    this.name = 'NoteConflictError';
+  }
+}
 
 import { CONTENT_SCHEMA_VERSION, Note, NoteId, NoteSource, Tag } from '../model';
 import { IClock, ILogger, IRandom } from '../ports';
@@ -21,6 +40,7 @@ import {
   optString,
   reqNumber,
   reqString,
+  transact,
 } from './rdb';
 
 export const DEFAULT_CONTENT_TYPE: string = 'text/markdown';
@@ -101,8 +121,26 @@ export class NoteRepository {
     return note;
   }
 
-  /** 更新正文（与可选的内容类型）；revision + 1 */
-  async updateContent(id: NoteId, contentMd: string, contentType?: string): Promise<Note> {
+  /**
+   * 更新正文（与可选的内容类型）；revision + 1。
+   * 传入 expectedRevision 时启用乐观并发校验（S4-3）：库内 revision 不符即抛
+   * NoteConflictError，绝不静默覆盖并发写入。校验与写入在同一事务内完成。
+   */
+  async updateContent(
+    id: NoteId,
+    contentMd: string,
+    contentType?: string,
+    expectedRevision?: number,
+  ): Promise<Note> {
+    if (expectedRevision !== undefined) {
+      return this.updateWithConcurrencyCheck(id, expectedRevision, async (existing) => {
+        const now: number = this.deps.clock.nowMs();
+        await this.deps.db.execute(
+          `UPDATE note SET content_md = ?, content_type = ?, revision = ?, updated_at = ? WHERE id = ?`,
+          [contentMd, contentType === undefined ? existing.contentType : contentType, existing.revision + 1, now, id],
+        );
+      });
+    }
     const existing: Note = await this.requireLive(id);
     const now: number = this.deps.clock.nowMs();
     await this.deps.db.execute(
@@ -128,8 +166,20 @@ export class NoteRepository {
     return this.requireLive(id);
   }
 
-  /** 编辑页一次性保存（标题 + 正文）：一次保存 = 一次同步语义修改，revision 只 + 1（设计 §4.8） */
-  async update(id: NoteId, title: string, contentMd: string): Promise<Note> {
+  /**
+   * 编辑页一次性保存（标题 + 正文）：一次保存 = 一次同步语义修改，revision 只 + 1（设计 §4.8）。
+   * 传入 expectedRevision 时启用乐观并发校验（S4-3）：冲突抛 NoteConflictError。
+   */
+  async update(id: NoteId, title: string, contentMd: string, expectedRevision?: number): Promise<Note> {
+    if (expectedRevision !== undefined) {
+      return this.updateWithConcurrencyCheck(id, expectedRevision, async (existing) => {
+        const now: number = this.deps.clock.nowMs();
+        await this.deps.db.execute(
+          `UPDATE note SET title = ?, content_md = ?, revision = ?, updated_at = ? WHERE id = ?`,
+          [title, contentMd, existing.revision + 1, now, id],
+        );
+      });
+    }
     const existing: Note = await this.requireLive(id);
     const now: number = this.deps.clock.nowMs();
     await this.deps.db.execute(
@@ -137,6 +187,25 @@ export class NoteRepository {
       [title, contentMd, existing.revision + 1, now, id],
     );
     return this.requireLive(id);
+  }
+
+  /**
+   * 乐观并发校验 + 写入（共享事务壳）：先读 revision，不匹配立即抛错（事务回滚，无写入发生）；
+   * 匹配才执行写入并提交。真实并发下第二个写者会在读阶段看到新 revision 而被拒。
+   */
+  private async updateWithConcurrencyCheck(
+    id: NoteId,
+    expectedRevision: number,
+    apply: (existing: Note) => Promise<void>,
+  ): Promise<Note> {
+    return transact(this.deps.db, async () => {
+      const existing: Note | undefined = await this.getById(id);
+      if (existing === undefined || existing.revision !== expectedRevision) {
+        throw new NoteConflictError(id, expectedRevision, existing?.revision);
+      }
+      await apply(existing);
+      return this.requireLive(id);
+    });
   }
 
   async setPinned(id: NoteId, pinned: boolean): Promise<Note> {

@@ -28,6 +28,13 @@ export const NOTE_LIST_LIMIT: number = 200;
 /** 单篇笔记的图片附件数量上限（防误粘贴刷屏；超限给出明确提示而不是静默丢弃） */
 export const MAX_IMAGE_ATTACHMENTS_PER_NOTE: number = 50;
 
+/**
+ * 单个图片附件的字节上限（S4-3 安全审计整改）：与分享接收闸门同一口径
+ * （share.ts DEFAULT_MAX_SHARE_FILE_BYTES = 32MB，设计 §4.1/§4.5.5「校验大小与类型」）。
+ * 超限在入 CAS 之前拒绝，避免巨型字节流落盘。
+ */
+export const MAX_IMAGE_ATTACHMENT_BYTES: number = 32 * 1024 * 1024;
+
 export interface NoteServiceDeps {
   readonly db: IRdbExecutor;
   readonly notes: NoteRepository;
@@ -206,6 +213,12 @@ export class NoteService {
   async importImage(noteId: NoteId, bytes: Uint8Array, mime: string, alt?: string): Promise<ImageImportResult> {
     if (bytes.length === 0) {
       throw new Error('NoteService.importImage: empty image bytes');
+    }
+    if (bytes.length > MAX_IMAGE_ATTACHMENT_BYTES) {
+      // 与分享接收同一口径：超限在入 CAS 之前拒绝，不留任何落盘副作用
+      throw new Error(
+        `NoteService.importImage: image too large (${bytes.length} bytes > ${MAX_IMAGE_ATTACHMENT_BYTES})`,
+      );
     }
     // 对回收站/不存在的笔记直接拒绝，避免给已删除笔记挂新引用
     const live: Note | undefined = await this.deps.notes.getById(noteId);
