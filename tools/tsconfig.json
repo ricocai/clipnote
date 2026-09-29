@@ -21,9 +21,10 @@
     "types": ["node"],
     "baseUrl": "..",
     "paths": {
-      // speech core 依赖 common 的 SpeechSegment（与 hvigor 构建一致的裸导入写法）；
-      // 本机 node 构建经此映射解析到单文件（speech 目前只用到这一个符号）
-      "common": ["common/src/main/ets/core/speech.ts"]
+      // speech core 经裸导入 'common' 取用内核符号（与 hvigor 构建一致的写法）；
+      // 本机 node 构建经此映射到垫片——只重导出 node 可编译的 common core 子集，
+      // 避开含 @kit.* 的 adapters/（见 tools/test/support/common-shim.ts）
+      "common": ["tools/test/support/common-shim.ts"]
     }
   },
   "include": [

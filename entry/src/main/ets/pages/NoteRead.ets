@@ -1,16 +1,33 @@
 import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
+import { common } from '@kit.AbilityKit';
 import {
   ATTACHMENT_SCHEME,
   attachmentRefOf,
   DocumentBlock,
   parseDocument,
 } from 'common';
+import {
+  AvSessionControls,
+  PlaybackState,
+  SpeechPlaybackController,
+  SpeechPlan,
+  SpeechPlanItem,
+  planSpeech,
+} from 'speech';
 import { AppServices } from '../services/AppServices';
 import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
 
 /**
- * MD 阅读页（S3-2；设计 §4.3 单一解析入口 / §4.4 渲染隔离 / G6）。
+ * MD 阅读页（S3-2 + S5-2 朗读接线；设计 §4.3 单一解析入口 / §4.4 渲染隔离 / §4.6 朗读 / G6）。
+ *
+ * 朗读链路（S5-2，调度全部在 speech HAR 内核，本页只做装配与回调）：
+ *  块模型 → planSpeech（规范化 + ≤300 字切段 + 块锚点）→ SpeechPlaybackController
+ *  （有界队列 + 代际切换）→ 系统离线引擎（playType=1 直接播报）。
+ * 高亮：onSegmentStart 回映射块下标 → reader.js highlight(data-cl-i 锚点)。
+ * 播控：AvSessionControls（通知栏/锁屏指令、焦点中断 → interrupt 段边界暂停）。
+ * 进度口径：TTS-0 段播完按整段字符数回报，段落级高亮够用；段内进度属
+ * playType=0 PCM 真机项（G4 §5-5），本页不实现。
  *
  * 渲染链路（一次解析，块模型复用）：
  *   笔记原文 → ArkWeb 内 markdown-it（reader.html 可信页）→ 桥接 Schema JSON
@@ -55,6 +72,15 @@ struct NoteRead {
   private readonly tokenizer: ArkWebMarkdownTokenizer = new ArkWebMarkdownTokenizer();
   private renderStarted: boolean = false;
 
+  // ---- 朗读（S5-2） ----
+  private plan: SpeechPlan | undefined = undefined;
+  private playback: SpeechPlaybackController | undefined = undefined;
+  private readonly avControls: AvSessionControls = new AvSessionControls();
+  private speechOrdinal: number = 0;
+  @State playState: PlaybackState = 'idle';
+  @State speechIndex: number = -1;
+  @State speechNotice: string = '';
+
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, string> | undefined;
     if (params !== undefined && params !== null) {
@@ -64,6 +90,85 @@ struct NoteRead {
       }
     }
     this.loadNote();
+    this.attachAvSession();
+  }
+
+  aboutToDisappear(): void {
+    void this.avControls.stop();
+    void this.playback?.stop();
+    this.highlightBlock(-1);
+  }
+
+  /** AVSession 播控（S5-2）：通知栏/锁屏指令映射到控制器；焦点中断 → 段边界暂停 */
+  private attachAvSession(): void {
+    void this.avControls.start(
+      getContext(this) as common.Context,
+      {
+        play: (): void => {
+          this.speechNotice = '';
+          void this.ensurePlayback().play();
+        },
+        pause: (): void => {
+          void this.playback?.pause();
+        },
+        next: (): void => {
+          void this.playback?.next();
+        },
+        prev: (): void => {
+          void this.playback?.prev();
+        },
+        stop: (): void => {
+          void this.playback?.stop();
+        },
+      },
+      (reason: string): void => {
+        void this.playback?.interrupt(reason);
+        this.speechNotice = `已暂停：${reason}`;
+      },
+    );
+  }
+
+  /** 控制器惰性创建：回调全部 @State 绑定，调度逻辑不在本页（同 AppServices 纪律） */
+  private ensurePlayback(): SpeechPlaybackController {
+    if (this.playback === undefined) {
+      this.playback = new SpeechPlaybackController(this.svc.speechEngine(), {
+        onStateChange: (state: PlaybackState): void => {
+          this.playState = state;
+          if (state === 'ready') {
+            this.speechIndex = -1;
+            this.highlightBlock(-1);
+          }
+        },
+        onSegmentStart: (item: SpeechPlanItem): void => {
+          this.speechIndex = item.segment.index;
+          this.highlightBlock(item.blockIndex);
+        },
+        onProgress: (): void => undefined,
+        onSegmentFinish: (): void => undefined,
+        onPlanComplete: (): void => {
+          this.highlightBlock(-1);
+        },
+        onError: (reason: string): void => {
+          this.speechNotice = `朗读失败：${reason}`;
+        },
+      });
+    }
+    return this.playback;
+  }
+
+  /** 段落级高亮：块下标 → reader.js 锚点（data-cl-i）；-1 清除。退页销毁后调用不致命 */
+  private highlightBlock(blockIndex: number): void {
+    try {
+      this.controller.runJavaScript(
+        `window.__clipnoteReader && window.__clipnoteReader.highlight(${blockIndex})`,
+      );
+    } catch {
+      // Web 组件已销毁（退页竞态）：高亮丢失无妨
+    }
+  }
+
+  private canSpeak(): boolean {
+    return this.plan !== undefined && this.plan.items.length > 0;
   }
 
   private async loadNote(): Promise<void> {
@@ -109,6 +214,16 @@ struct NoteRead {
         const blocks: DocumentBlock[] = parseDocument(this.tokenizer, this.markdown, {
           docRevision: this.revision,
         });
+        // 朗读计划与渲染块模型同源（S5-2）：块数组就地规划，换篇即换计划，
+        // 控制器作废旧代际；高亮锚点（blockIndex）与 data-cl-i 一致
+        this.plan = planSpeech(blocks, this.markdown);
+        if (this.canSpeak()) {
+          this.speechOrdinal++;
+          const ctl: SpeechPlaybackController = this.ensurePlayback();
+          void ctl.load(this.plan as SpeechPlan).then((): void => {
+            void this.avControls.updateMetadata(this.title, this.speechOrdinal);
+          });
+        }
         const blocksJson: string = JSON.stringify(blocks);
         this.controller.runJavaScript(
           `window.__clipnoteRender(${blocksJson}, ${sourceJson})`,
@@ -177,6 +292,77 @@ struct NoteRead {
           .fontSize(13)
           .fontColor('#1F6FEB')
           .width('100%')
+      }
+
+      // ---- 朗读控制条（S5-2；调度在 speech 内核，本页仅按钮与状态） ----
+      if (this.canSpeak()) {
+        Column({ space: 4 }) {
+          Row({ space: 12 }) {
+            if (this.playState === 'playing') {
+              Text('暂停')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  void this.playback?.pause();
+                })
+              Text('停止')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  void this.playback?.stop();
+                })
+              Text('上一段')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  void this.playback?.prev();
+                })
+              Text('下一段')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  void this.playback?.next();
+                })
+            } else if (this.playState === 'paused') {
+              Text('继续')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  this.speechNotice = '';
+                  void this.playback?.play();
+                })
+              Text('停止')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  void this.playback?.stop();
+                })
+            } else {
+              Text('朗读')
+                .fontSize(15)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  this.speechNotice = '';
+                  void this.ensurePlayback().play();
+                })
+            }
+          }
+          .width('100%')
+
+          if (this.playState === 'playing' || this.playState === 'paused') {
+            Text(`朗读中 ${this.speechIndex + 1}/${(this.plan as SpeechPlan).items.length}`)
+              .fontSize(12)
+              .fontColor('#8C8C8C')
+              .width('100%')
+          }
+          if (this.speechNotice.length > 0) {
+            Text(this.speechNotice)
+              .fontSize(12)
+              .fontColor('#D4380D')
+              .width('100%')
+          }
+        }
+        .width('100%')
       }
 
       if (this.ready) {

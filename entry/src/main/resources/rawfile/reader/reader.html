@@ -52,6 +52,13 @@
     figure img { max-width: 100%; border-radius: 6px; display: block; }
     figcaption { font-size: 0.82em; color: #8C8C8C; margin-top: 4px; }
     .cl-image-missing { color: #8C8C8C; font-size: 0.9em; }
+    /* 朗读段落高亮（设计 §4.6；锚点 data-cl-i 由 reader.js 受控拼接，见该文件头） */
+    .cl-speaking {
+      background: #FFF3C2;
+      border-radius: 4px;
+      box-shadow: 0 0 0 3px #FFF3C2;
+      transition: background 0.2s ease;
+    }
     /* 长文滚动性能：屏外块跳过渲染，占位高度避免滚动条抖动 */
     #root > * { content-visibility: auto; contain-intrinsic-size: auto 160px; }
   </style>
