@@ -19,6 +19,7 @@ import {
   IRandom,
   LogLevel,
 } from '../../../common/src/main/ets/core/ports';
+import { utf8Decode, utf8Encode } from '../../../common/src/main/ets/core/bytes';
 import { MdToken, IMarkdownTokenizer } from '../../../common/src/main/ets/core/markdown';
 
 export class FixedClock implements IClock {
@@ -152,7 +153,8 @@ export class NodeFileStore implements IFileStore {
  * `failNextWrite` 用于验证"临时文件已写但改名未执行"这一崩溃点。
  */
 export class MemoryFileStore implements IFileStore {
-  private readonly files: Map<string, string> = new Map<string, string>();
+  // 单一字节存储：文本只是 UTF-8 视图（与真实文件系统同一语义）。
+  // S4-3 审计整改前 text/bytes 双映射互相不可见，跨读写模式会假 ENOENT。
   private readonly byteFiles: Map<string, Uint8Array> = new Map<string, Uint8Array>();
   private readonly dirs: Set<string> = new Set<string>();
   /** 注入的写失败次数（模拟磁盘满） */
@@ -167,13 +169,9 @@ export class MemoryFileStore implements IFileStore {
     this.ensureDir(p);
   }
   async exists(p: string): Promise<boolean> {
-    return this.files.has(p) || this.byteFiles.has(p) || this.dirs.has(p);
+    return this.byteFiles.has(p) || this.dirs.has(p);
   }
   async stat(p: string): Promise<FileStat | undefined> {
-    if (this.files.has(p)) {
-      const v = this.files.get(p) as string;
-      return new NodeFileStat(Buffer.byteLength(v, 'utf8'), 0, FileKind.FILE);
-    }
     if (this.byteFiles.has(p)) {
       return new NodeFileStat((this.byteFiles.get(p) as Uint8Array).length, 0, FileKind.FILE);
     }
@@ -188,7 +186,7 @@ export class MemoryFileStore implements IFileStore {
       this.failNextWrite--;
       throw new Error('ENOSPC: no space left on device (injected)');
     }
-    this.files.set(p, data);
+    this.byteFiles.set(p, utf8Encode(data));
     this.ensureDir(p.slice(0, p.lastIndexOf('/')));
   }
   async writeRawBytes(p: string, data: Uint8Array): Promise<void> {
@@ -201,11 +199,11 @@ export class MemoryFileStore implements IFileStore {
     this.ensureDir(p.slice(0, p.lastIndexOf('/')));
   }
   async readText(p: string): Promise<string> {
-    const v = this.files.get(p);
+    const v = this.byteFiles.get(p);
     if (v === undefined) {
       throw new Error(`ENOENT: ${p}`);
     }
-    return v;
+    return utf8Decode(v);
   }
   async readBytes(p: string): Promise<Uint8Array> {
     if (this.failNextReadBytes > 0) {
@@ -220,12 +218,6 @@ export class MemoryFileStore implements IFileStore {
   }
   async rename(fromPath: string, toPath: string): Promise<void> {
     this.renameLog.push(`${fromPath}->${toPath}`);
-    if (this.files.has(fromPath)) {
-      const v = this.files.get(fromPath) as string;
-      this.files.delete(fromPath);
-      this.files.set(toPath, v);
-      return;
-    }
     if (this.byteFiles.has(fromPath)) {
       const b = this.byteFiles.get(fromPath) as Uint8Array;
       this.byteFiles.delete(fromPath);
@@ -238,18 +230,12 @@ export class MemoryFileStore implements IFileStore {
     /* no-op */
   }
   async remove(p: string): Promise<void> {
-    this.files.delete(p);
     this.byteFiles.delete(p);
     this.dirs.delete(p);
   }
   async list(dir: string): Promise<string[]> {
     const prefix = dir.endsWith('/') ? dir : `${dir}/`;
     const out = new Set<string>();
-    this.files.forEach((_v, k) => {
-      if (k.startsWith(prefix)) {
-        out.add(k.slice(prefix.length).split('/')[0]);
-      }
-    });
     this.byteFiles.forEach((_v, k) => {
       if (k.startsWith(prefix)) {
         out.add(k.slice(prefix.length).split('/')[0]);
@@ -264,7 +250,7 @@ export class MemoryFileStore implements IFileStore {
   }
   /** 直接注入文件（模拟"文件已在盘上但 DB 无引用"） */
   seed(p: string, content: string): void {
-    this.files.set(p, content);
+    this.byteFiles.set(p, utf8Encode(content));
     this.ensureDir(p.slice(0, p.lastIndexOf('/')));
   }
   /** 直接注入二进制文件 */
@@ -289,11 +275,10 @@ export class MemoryFileStore implements IFileStore {
   }
   /** 直接删除文件（模拟"DB 有引用但文件丢失"） */
   drop(p: string): void {
-    this.files.delete(p);
     this.byteFiles.delete(p);
   }
   allPaths(): string[] {
-    return Array.from(new Set([...this.files.keys(), ...this.byteFiles.keys()])).sort();
+    return Array.from(this.byteFiles.keys()).sort();
   }
 }
 

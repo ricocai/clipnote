@@ -138,8 +138,10 @@ export class BackupService {
       await this.writer.write(`${staging}/${MANIFEST_ENTRY}`, manifestJson);
       for (let i: number = 0; i < manifest.blobs.length; i++) {
         const rel: string = manifest.blobs[i].relativePath;
-        const content: string = await fs.readText(`${this.deps.root}/${rel}`);
-        await this.writer.write(`${staging}/${rel}`, content);
+        // blob 可能是任意二进制（图片附件）——字节级原样搬运，绝不经过文本解码
+        // （S4-3 安全审计整改：readText/utf8 往返会损坏非 UTF-8 字节，恢复时摘要不符）
+        const content: Uint8Array = await fs.readBytes(`${this.deps.root}/${rel}`);
+        await this.writer.writeBytes(`${staging}/${rel}`, content);
       }
       await this.emitExport(hooks, 'staged');
 
@@ -161,7 +163,7 @@ export class BackupService {
       entries.push({ name: MANIFEST_ENTRY, data: utf8Encode(manifestJson) });
       for (let i: number = 0; i < manifest.blobs.length; i++) {
         const rel: string = manifest.blobs[i].relativePath;
-        entries.push({ name: rel, data: utf8Encode(await fs.readText(`${staging}/${rel}`)) });
+        entries.push({ name: rel, data: await fs.readBytes(`${staging}/${rel}`) });
       }
       const zipBytes: Uint8Array = buildZip(entries);
       await this.emitExport(hooks, 'zip-built');
@@ -238,7 +240,12 @@ export class BackupService {
       }
       for (let i: number = 0; i < zip.entries.length; i++) {
         const e: ZipEntryData = zip.entries[i];
-        await this.writer.write(`${staging}/${e.name}`, utf8Decode(e.data));
+        if (e.name === MANIFEST_ENTRY) {
+          await this.writer.write(`${staging}/${e.name}`, utf8Decode(e.data));
+        } else {
+          // blobs/** 按字节原样落暂存（二进制安全，同 export 路径口径）
+          await this.writer.writeBytes(`${staging}/${e.name}`, e.data);
+        }
       }
       await this.emit(hooks, 'staged');
 
@@ -266,8 +273,8 @@ export class BackupService {
       }
       for (let i: number = 0; i < manifest.blobs.length; i++) {
         const rec = manifest.blobs[i];
-        const content: string = await fs.readText(`${staging}/${rec.relativePath}`);
-        const actual: string = await this.deps.hasher.sha256Hex(content);
+        const content: Uint8Array = await fs.readBytes(`${staging}/${rec.relativePath}`);
+        const actual: string = await this.deps.hasher.sha256HexBytes(content);
         if (actual !== rec.sha256) {
           return this.reject(issues, 'blob_hash_mismatch', `blob ${rec.sha256.slice(0, 12)}… content digest mismatch`);
         }
@@ -278,7 +285,7 @@ export class BackupService {
       for (let i: number = 0; i < manifest.blobs.length; i++) {
         const rec = manifest.blobs[i];
         if (!(await this.cas.exists(rec.sha256))) {
-          await this.cas.put(await fs.readText(`${staging}/${rec.relativePath}`));
+          await this.cas.putBytes(await fs.readBytes(`${staging}/${rec.relativePath}`));
         }
       }
       await this.emit(hooks, 'blobs-staged');
