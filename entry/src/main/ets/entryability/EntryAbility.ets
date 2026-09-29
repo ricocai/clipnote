@@ -9,6 +9,7 @@ import {
   HilogLogger,
   SystemClock,
 } from 'common';
+import { AppServices } from '../services/AppServices';
 import { G1ProbeLog } from '../probe/G1ProbeLog';
 import { probeForegroundRead, probeShareUriCopy, probeShareWant, recordDeviceInfo } from '../probe/G1ProbeScenes';
 import { EVENT_FOREGROUND } from '../EntryEvents';
@@ -92,6 +93,11 @@ export default class EntryAbility extends UIAbility {
     // 提示条，读取必须等用户点击提示条（用户手势）才发生 —— 本层零读取、零落盘。
     this.context.eventHub.emit(EVENT_FOREGROUND);
     hilog.info(DOMAIN, TAG, '%{public}s', 'ability onForeground');
+    // S6-7：MCP 仅前台监听 —— 回前台按开关启动服务并挂 30s 周期清扫；
+    // 启动失败（如端口占用）显式记日志交设置页状态展示，不阻断回前台。
+    AppServices.get().mcpService().enterForeground().catch((err: Error) => {
+      hilog.error(DOMAIN, TAG, 'mcp enterForeground failed: %{public}s', String(err));
+    });
     // ===== G1 PROBE BEGIN（WHY-90 临时设施）=====
     // 注意：这是一次"故意违反上面产品口径"的探测 —— 验证无手势时机下系统是否放行读取、
     // 默认授权策略下是否弹窗。探针块随 G1 验收移除后，恢复上方注释所述行为。
@@ -103,5 +109,9 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     hilog.info(DOMAIN, TAG, '%{public}s', 'ability onBackground');
+    // S6-7：退后台停 30s 清扫并关闭 MCP 服务（会话/配对/授权即刻清零）
+    AppServices.get().mcpService().enterBackground().catch((err: Error) => {
+      hilog.error(DOMAIN, TAG, 'mcp enterBackground failed: %{public}s', String(err));
+    });
   }
 }

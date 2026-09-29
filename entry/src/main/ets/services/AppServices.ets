@@ -22,6 +22,7 @@ import {
   SystemTtsDriver,
   SystemTtsEngine,
 } from 'speech';
+import { McpService } from './McpService';
 
 /**
  * 依赖装配（最薄的一层；S3-1 从 Index 页抽出为独立模块，供收件箱页 / 笔记列表页 / 编辑页共用）。
@@ -48,6 +49,7 @@ export class AppServices {
   private inboxSvc: InboxService | undefined = undefined;
   private noteSvc: NoteService | undefined = undefined;
   private shareSvc: ShareIntakeService | undefined = undefined;
+  private mcpSvc: McpService | undefined = undefined;
   private appVersion: string | undefined = undefined;
   private engineInst: SystemTtsEngine | undefined = undefined;
 
@@ -137,6 +139,25 @@ export class AppServices {
       );
     }
     return this.engineInst;
+  }
+
+  /**
+   * MCP 局域网服务（S6-7；设计 §4.5.3）：单例协调器。
+   * 开关状态内存态（重启默认关，安全默认 = 默认拒绝）；实际启停由
+   * EntryAbility 前台/后台回调与设置页开关驱动（见 McpService 头注释）。
+   */
+  mcpService(): McpService {
+    if (this.mcpSvc === undefined) {
+      this.mcpSvc = new McpService({
+        clock: this.clock,
+        random: this.random,
+        hasher: this.hasher,
+        fs: this.fs,
+        logger: this.logger,
+        noteService: () => this.noteService(),
+      });
+    }
+    return this.mcpSvc;
   }
 
   /**

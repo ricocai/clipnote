@@ -13,4 +13,7 @@
 module.exports = {
   ...require('../../../dist/common/src/main/ets/core/speech.js'),
   ...require('../../../dist/common/src/main/ets/core/model.js'),
+  // S6-7 entry MCP 装配层（McpNoteStoreAdapter 的 NoteService/NoteRepository/NoteSource）
+  ...require('../../../dist/common/src/main/ets/core/notes.js'),
+  ...require('../../../dist/common/src/main/ets/core/data/note-repository.js'),
 };

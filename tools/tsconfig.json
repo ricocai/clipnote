@@ -21,10 +21,14 @@
     "types": ["node"],
     "baseUrl": "..",
     "paths": {
-      // speech core 经裸导入 'common' 取用内核符号（与 hvigor 构建一致的写法）；
+      // speech core 与 entry MCP 装配层（McpNoteStoreAdapter / McpServiceCore）
+      // 经裸导入 'common' 取用内核符号（与 hvigor 构建一致的写法）；
       // 本机 node 构建经此映射到垫片——只重导出 node 可编译的 common core 子集，
       // 避开含 @kit.* 的 adapters/（见 tools/test/support/common-shim.ts）
-      "common": ["tools/test/support/common-shim.ts"]
+      "common": ["tools/test/support/common-shim.ts"],
+      // entry MCP 装配层经裸导入 'mcp' 取用 core 符号；mcp core 零平台依赖，
+      // 垫片整体重导出 core（见 tools/test/support/mcp-shim.ts）
+      "mcp": ["tools/test/support/mcp-shim.ts"]
     }
   },
   "include": [
@@ -32,6 +36,9 @@
     "./probes/**/*.ts",
     "../common/src/main/ets/core/**/*.ts",
     "../mcp/src/main/ets/core/**/*.ts",
-    "../speech/src/main/ets/core/**/*.ts"
+    "../speech/src/main/ets/core/**/*.ts",
+    // entry 装配层中的平台无关部分（.ts；.ets 含 @kit.*，不进本机基线）：
+    // McpNoteStoreAdapter / McpServiceCore 与 hvigor 编译同一源码
+    "../entry/src/main/ets/**/*.ts"
   ]
 }

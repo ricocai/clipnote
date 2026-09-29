@@ -6,7 +6,9 @@ import {
   PermissionStatusReport,
   describeExportRecord,
 } from 'common';
+import { PendingPairingView } from 'mcp';
 import { AppServices } from '../services/AppServices';
+import { McpGrantedClientView } from '../services/McpServiceCore';
 
 /**
  * 设置页（S2-4 任务 3：权限状态区 + 能力边界说明）。
@@ -20,6 +22,16 @@ import { AppServices } from '../services/AppServices';
  *     不后台采集、不回补历史、当前不使用通知。
  */
 
+/** 配对码剩余有效期提示（分钟级进一法；过期由 core 清扫） */
+function ttlHint(expiresAtMs: number): string {
+  const remainMs: number = expiresAtMs - Date.now();
+  if (remainMs <= 0) {
+    return '已过期';
+  }
+  const minutes: number = Math.ceil(remainMs / 60000);
+  return `${minutes} 分钟内有效`;
+}
+
 @Entry
 @Component
 struct Settings {
@@ -29,6 +41,14 @@ struct Settings {
   /** 最近导出记录（S4-2；只读展示，元数据无正文） */
   @State exportLines: string[] = [];
   @State exporting: boolean = false;
+  /** MCP 服务（S6-7）UI 态 */
+  @State mcpEnabled: boolean = false;
+  @State mcpRunning: boolean = false;
+  @State mcpStatusLine: string = 'MCP 服务：查询中…';
+  @State mcpAddressLine: string = '';
+  @State mcpCodeLine: string = '';
+  @State mcpPendings: PendingPairingView[] = [];
+  @State mcpClients: McpGrantedClientView[] = [];
 
   private readonly perm: DevicePermissionStatus = new DevicePermissionStatus();
   private readonly svc: AppServices = AppServices.get();
@@ -36,6 +56,9 @@ struct Settings {
   aboutToAppear(): void {
     this.refresh();
     this.loadExportRecords();
+    this.refreshMcp().catch((err: Error) => {
+      this.notice = `MCP 状态读取失败：${String(err)}`;
+    });
   }
 
   /** 最近导出记录（设置页展示口径：每条一行，时间倒序，最多 5 条） */
@@ -103,6 +126,100 @@ struct Settings {
         this.notice = '未能拉起系统设置。可自行前往：设置 → 应用管理 → 拾记 ClipNote（权限项）。';
       }
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // MCP 服务（S6-7；设计 §4.5.3/§4.5.5）
+  // -------------------------------------------------------------------------
+
+  /** 状态刷新：运行状态 / 连接地址与证书指纹 / 当前配对码 / 挂起请求 / 已授权客户端 */
+  private async refreshMcp(): Promise<void> {
+    const svc = this.svc.mcpService();
+    this.mcpEnabled = svc.isEnabled();
+    this.mcpRunning = svc.isRunning();
+    if (svc.isRunning()) {
+      const st = svc.state();
+      const addr: string = await svc.localAddress();
+      this.mcpStatusLine = `MCP 服务：运行中 · 端口 ${st.boundPort}`;
+      const fp: string = svc.fingerprintDisplay();
+      this.mcpAddressLine = `连接地址 ${addr.length > 0 ? addr : '（本机地址枚举失败，请查系统 WLAN IP）'}:${st.boundPort}` +
+        (fp.length > 0 ? `\n证书指纹（TOFU 核对）${fp}` : '');
+      const code = svc.currentPairingCode();
+      this.mcpCodeLine = code === undefined ? '' : `当前配对码 ${code.code} · ${ttlHint(code.expiresAtMs)}`;
+    } else {
+      this.mcpStatusLine = 'MCP 服务：已停止';
+      this.mcpAddressLine = '';
+      this.mcpCodeLine = '';
+    }
+    this.mcpPendings = svc.pendingPairings();
+    this.mcpClients = svc.grantedClients();
+  }
+
+  /** 开关切换：立即启/停；启动失败如实提示并回退开关（失败显式，绝不静默） */
+  private async toggleMcp(on: boolean): Promise<void> {
+    const svc = this.svc.mcpService();
+    try {
+      await svc.setEnabled(on);
+      this.notice = on ? 'MCP 服务已开启（仅前台监听，退后台自动关闭）' : 'MCP 服务已关闭';
+    } catch (err) {
+      this.notice = `MCP 服务启动失败：${String(err)}`;
+      try {
+        await svc.setEnabled(false);
+      } catch {
+        // 回退失败仅记日志（服务未运行，无副作用可回退）
+      }
+    }
+    await this.refreshMcp();
+  }
+
+  private async genPairingCode(): Promise<void> {
+    const svc = this.svc.mcpService();
+    if (!svc.isRunning()) {
+      this.notice = '请先开启 MCP 服务再生成配对码';
+      return;
+    }
+    try {
+      svc.newPairingCode();
+      this.notice = '';
+    } catch (err) {
+      this.notice = `生成配对码失败：${String(err)}`;
+    }
+    await this.refreshMcp();
+  }
+
+  /**
+   * 确认配对：签发凭证并按首发口径授权（全部工具 + 全部标签集合）。
+   * 访问令牌只在签发瞬间经弹窗展示一次（设计：令牌不进日志/正文/WebView）。
+   */
+  private async confirmMcpPairing(id: string): Promise<void> {
+    try {
+      const issued = await this.svc.mcpService().confirmPairing(id);
+      if (issued === undefined) {
+        this.notice = '该配对请求已失效（可能已被处理或过期）';
+      } else {
+        AlertDialog.show({
+          title: '配对成功',
+          message: '请把以下访问令牌粘贴到 Host 客户端（只显示这一次，关闭后无法找回）：\n\n' +
+            issued.token,
+          confirm: { value: '我已保存', action: () => undefined },
+        });
+      }
+    } catch (err) {
+      this.notice = `确认配对失败：${String(err)}`;
+    }
+    await this.refreshMcp();
+  }
+
+  private async rejectMcpPairing(id: string): Promise<void> {
+    this.svc.mcpService().rejectPairing(id);
+    await this.refreshMcp();
+  }
+
+  /** 撤销客户端：凭证与授权即时失效（下一次调用即拒，授权现场查表） */
+  private async revokeMcpClient(clientId: string): Promise<void> {
+    this.svc.mcpService().revokeClient(clientId);
+    this.notice = '已撤销该客户端的访问凭证与授权';
+    await this.refreshMcp();
   }
 
   build() {
@@ -231,6 +348,109 @@ struct Settings {
         }
         .alignItems(HorizontalAlign.Start)
         .width('100%')
+      }
+
+      // MCP 局域网服务（S6-7，设计 §4.5.3）：开关 + 配对 + 已授权客户端管理
+      Text('MCP 局域网服务')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      Text('让局域网内的 Host（如 Cherry Studio）经 MCP 协议读写笔记。仅前台监听、退后台即关；'
+        + '传输为 TLS 自签证书，Host 侧请核对指纹。客户端须输入配对码完成配对，每次调用都会记入审计。')
+        .fontSize(12)
+        .fontColor('#595959')
+        .width('100%')
+      Row({ space: 10 }) {
+        Switch()
+          .checked(this.mcpEnabled)
+          .onChange((on: boolean) => {
+            this.toggleMcp(on);
+          })
+        Text(this.mcpStatusLine)
+          .fontSize(13)
+          .layoutWeight(1)
+      }
+      .width('100%')
+      if (this.mcpRunning) {
+        Text(this.mcpAddressLine)
+          .fontSize(12)
+          .fontColor('#1F6FEB')
+          .width('100%')
+        Row({ space: 8 }) {
+          Button('生成配对码')
+            .fontSize(12)
+            .height(30)
+            .onClick(() => {
+              this.genPairingCode();
+            })
+          Button('刷新配对状态')
+            .fontSize(12)
+            .height(30)
+            .backgroundColor('#F5F5F5')
+            .fontColor('#333333')
+            .onClick(() => {
+              this.refreshMcp().catch((err: Error) => {
+                this.notice = `MCP 状态读取失败：${String(err)}`;
+              });
+            })
+        }
+        .width('100%')
+        if (this.mcpCodeLine.length > 0) {
+          Text(this.mcpCodeLine)
+            .fontSize(13)
+            .fontColor('#237804')
+            .width('100%')
+        }
+        if (this.mcpPendings.length > 0) {
+          Text('待确认的配对请求（来自 Host 的配对码提交）')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .width('100%')
+          ForEach(this.mcpPendings, (p: PendingPairingView) => {
+            Row({ space: 8 }) {
+              Text(`${p.clientName}（${p.remoteAddress}）`)
+                .fontSize(13)
+                .layoutWeight(1)
+              Button('确认')
+                .fontSize(12)
+                .height(30)
+                .onClick(() => {
+                  this.confirmMcpPairing(p.id);
+                })
+              Button('拒绝')
+                .fontSize(12)
+                .height(30)
+                .backgroundColor('#F5F5F5')
+                .fontColor('#333333')
+                .onClick(() => {
+                  this.rejectMcpPairing(p.id);
+                })
+            }
+            .width('100%')
+          }, (p: PendingPairingView) => p.id)
+        }
+        if (this.mcpClients.length > 0) {
+          Text('已授权的客户端')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .width('100%')
+          ForEach(this.mcpClients, (c: McpGrantedClientView) => {
+            Row({ space: 8 }) {
+              Text(`${c.label.length > 0 ? c.label : c.clientId} · ${c.toolCount} 个工具 · ${c.collectionCount} 个集合`)
+                .fontSize(13)
+                .layoutWeight(1)
+              Button('撤销')
+                .fontSize(12)
+                .height(30)
+                .backgroundColor('#F5F5F5')
+                .fontColor('#D4380D')
+                .onClick(() => {
+                  this.revokeMcpClient(c.clientId);
+                })
+            }
+            .width('100%')
+          }, (c: McpGrantedClientView) => c.clientId)
+        }
       }
 
       // MCP 访问审计（S6-1，设计 §4.5.5）：只读查询页，只展示元数据
