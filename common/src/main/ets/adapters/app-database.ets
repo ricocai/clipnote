@@ -6,6 +6,7 @@ import { SchemaMigrator } from '../core/data/migrator';
 import { NoteRepository } from '../core/data/note-repository';
 import { InboxRepository } from '../core/data/inbox-repository';
 import { BlobRepository } from '../core/data/blob-repository';
+import { McpAuditRepository } from '../core/data/mcp-audit-repository';
 import { StartupRecoveryReport, runStartupRecovery } from '../core/data/recovery';
 import { RelationalStoreExecutor } from './relational-store';
 import { SandboxFileStore } from './file-store';
@@ -28,6 +29,7 @@ export class AppDataRuntime {
   readonly notes: NoteRepository;
   readonly inbox: InboxRepository;
   readonly blobs: BlobRepository;
+  readonly mcpAudit: McpAuditRepository;
   readonly blobCas: BlobCas;
   recoveryReport: StartupRecoveryReport | undefined = undefined;
 
@@ -36,12 +38,14 @@ export class AppDataRuntime {
     notes: NoteRepository,
     inbox: InboxRepository,
     blobs: BlobRepository,
+    mcpAudit: McpAuditRepository,
     blobCas: BlobCas,
   ) {
     this.executor = executor;
     this.notes = notes;
     this.inbox = inbox;
     this.blobs = blobs;
+    this.mcpAudit = mcpAudit;
     this.blobCas = blobCas;
   }
 
@@ -92,9 +96,10 @@ export class AppDataRuntime {
     const notes: NoteRepository = new NoteRepository({ db: executor, clock, random, logger });
     const inbox: InboxRepository = new InboxRepository({ db: executor, logger });
     const blobs: BlobRepository = new BlobRepository({ db: executor, logger });
+    const mcpAudit: McpAuditRepository = new McpAuditRepository(executor);
     const blobCas: BlobCas = new BlobCas(context.filesDir, new SandboxFileStore(), hasher, logger, random);
 
-    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, inbox, blobs, blobCas);
+    const runtime: AppDataRuntime = new AppDataRuntime(executor, notes, inbox, blobs, mcpAudit, blobCas);
     runtime.recoveryReport = await runStartupRecovery({ blobRepository: blobs, blobCas, logger });
     // 收件箱保留期清理（S2-2，设计 §4.1）：启动即清，不依赖用户是否打开收件箱页
     const purged: number = await inbox.purgeExpired(clock.nowMs());

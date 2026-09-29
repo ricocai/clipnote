@@ -99,9 +99,9 @@ export default function dataLayerTest(): void {
       expect(version).assertEqual(DB_SCHEMA_VERSION);
 
       const rows: SqlRow[] = await db.query(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('note', 'tag', 'note_tag', 'blob', 'note_attachment', 'clipboard_item', 'note_fts', 'schema_meta')`,
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('note', 'tag', 'note_tag', 'blob', 'note_attachment', 'clipboard_item', 'note_fts', 'mcp_audit', 'schema_meta')`,
       );
-      expect(rows.length).assertEqual(8);
+      expect(rows.length).assertEqual(9);
     });
 
     it('foreign_keys_reject_dangling_attachment', 0, async () => {

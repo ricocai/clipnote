@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Index",
-    "pages/G1ProbePage"
+    "pages/G1ProbePage",
+    "pages/SettingsPage"
   ]
 }

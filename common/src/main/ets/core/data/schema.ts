@@ -14,7 +14,7 @@
  *  - DDL 一律 `IF NOT EXISTS`，保证重复执行安全。
  */
 
-export const DB_SCHEMA_VERSION: number = 1;
+export const DB_SCHEMA_VERSION: number = 2;
 
 export interface Migration {
   readonly version: number;
@@ -113,6 +113,30 @@ const MIGRATION_V1: readonly string[] = [
    )`,
 ];
 
+/**
+ * V2：MCP 审计表（设计 §4.5.5）。
+ *
+ * 审计纪律（勿破坏）：只记元数据 —— 客户端、工具、对象 ID、结果、时间与
+ * 载荷字节数；**不记正文、不记令牌**（令牌/正文进库会把审计表变成数据泄露面）。
+ * `object_ids` 以 JSON 数组文本存储（仅对象 ID 列表，属元数据）。
+ */
+const MIGRATION_V2: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS mcp_audit (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     client_id TEXT NOT NULL,
+     tool TEXT NOT NULL,
+     object_ids TEXT NOT NULL,
+     result TEXT NOT NULL,
+     at_ms INTEGER NOT NULL,
+     payload_bytes INTEGER NOT NULL
+   )`,
+  // 审计查询页主路径：按时间倒序翻页
+  `CREATE INDEX IF NOT EXISTS idx_mcp_audit_at ON mcp_audit (at_ms)`,
+  // 按客户端追溯其行为序列
+  `CREATE INDEX IF NOT EXISTS idx_mcp_audit_client ON mcp_audit (client_id, at_ms)`,
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'init', statements: MIGRATION_V1 },
+  { version: 2, name: 'mcp_audit', statements: MIGRATION_V2 },
 ];

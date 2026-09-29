@@ -470,6 +470,16 @@ struct Index {
           router.pushUrl({ url: 'pages/G1ProbePage' });
         })
 
+      // 设置入口（S6-1）：MCP 访问审计查询（只读，只展示元数据）
+      Text('设置 · MCP 访问审计')
+        .fontSize(12)
+        .fontColor('#8C8C8C')
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .onClick(() => {
+          router.pushUrl({ url: 'pages/SettingsPage' });
+        })
+
       Row() {
         Text(`收件箱（${this.pendingCount}/${DEFAULT_INBOX_CAPACITY}）`)
           .fontSize(16)

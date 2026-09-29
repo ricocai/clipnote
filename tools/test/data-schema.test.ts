@@ -22,7 +22,7 @@ test('schema: 全新库迁移到当前版本，全部表与索引建立', async 
   assert.equal(await migrator.migrate(), DB_SCHEMA_VERSION);
 
   const tables = await tableNames(db);
-  for (const t of ['schema_meta', 'note', 'tag', 'note_tag', 'blob', 'note_attachment', 'clipboard_item', 'note_fts']) {
+  for (const t of ['schema_meta', 'note', 'tag', 'note_tag', 'blob', 'note_attachment', 'clipboard_item', 'note_fts', 'mcp_audit']) {
     assert.ok(tables.includes(t), `missing table ${t}`);
   }
 
@@ -35,6 +35,8 @@ test('schema: 全新库迁移到当前版本，全部表与索引建立', async 
     'idx_note_attachment_blob',
     'idx_clipboard_item_state',
     'idx_clipboard_item_expires',
+    'idx_mcp_audit_at',
+    'idx_mcp_audit_client',
   ]) {
     assert.ok(indexes.includes(idx), `missing index ${idx}`);
   }
@@ -59,15 +61,15 @@ test('schema: 版本跳号直接报错（防发布漏带迁移）', async () => 
   db.close();
 });
 
-test('schema: 增量迁移在上一版本之上应用（v2 加列）', async () => {
+test('schema: 增量迁移在上一版本之上应用（v3 加列）', async () => {
   const db = NodeSqliteExecutor.openMemory();
-  const v2: readonly Migration[] = [
+  const v3: readonly Migration[] = [
     ...MIGRATIONS,
-    { version: 2, name: 'add_mood', statements: [`ALTER TABLE note ADD COLUMN mood TEXT`] },
+    { version: 3, name: 'add_mood', statements: [`ALTER TABLE note ADD COLUMN mood TEXT`] },
   ];
-  const migrator = new SchemaMigrator(db, logger, v2);
+  const migrator = new SchemaMigrator(db, logger, v3);
 
-  assert.equal(await migrator.migrate(), 2);
+  assert.equal(await migrator.migrate(), 3);
   const cols = await db.query(`SELECT name FROM pragma_table_info('note')`);
   const names = cols.map((r) => reqString(r, 'name'));
   assert.ok(names.includes('mood'));
