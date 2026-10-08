@@ -24,6 +24,7 @@ import {
   Note,
   NoteSource,
   PERSISTED_DEDUPE_WINDOW_MS,
+  Sensitivity,
 } from './model';
 import { ClipIngestService, IngestImageInput } from './clip';
 import { InboxRepository } from './data/inbox-repository';
@@ -78,6 +79,20 @@ export interface CaptureResult {
   readonly reasons: string[];
   /** 本次落盘连带清理的条数（保留期 + 容量淘汰） */
   readonly evicted: number;
+}
+
+/** 批量转存结果（Feature 4）：各去向如实分开报告，UI 逐项播报 */
+export interface BatchAcceptResult {
+  /** 成功转存为笔记的收件箱条目 id */
+  readonly acceptedIds: string[];
+  /** 与 acceptedIds 一一对应的转存笔记 */
+  readonly notes: Note[];
+  /** 已确认保存的敏感条目：批量不触碰，需用户逐条处理 */
+  readonly skippedSensitive: string[];
+  /** 不存在或已不在 PENDING 时间线的条目（并发变化时幂等跳过） */
+  readonly skippedNotPending: string[];
+  /** 转存过程中抛错的条目 id（日志有各条原因） */
+  readonly failed: string[];
 }
 
 export class InboxService {
@@ -232,8 +247,9 @@ export class InboxService {
    * 条目标记 ACCEPTED —— 从收件箱列表消失，物理行由保留期清理收尾。
    * 正文判定为 HTML 文档时 contentType 记 'text/html'（S3-3；设计 §4.4），
    * 该笔记此后只能进受控展示页（只读），不进 Markdown 编辑渲染链路。
+   * notebookId 缺省落当前默认笔记本（Feature 4 批量转存的笔记本选择入口）。
    */
-  async acceptAsNote(id: string): Promise<Note> {
+  async acceptAsNote(id: string, notebookId?: string): Promise<Note> {
     const item: ClipboardItem | undefined = await this.deps.inbox.getById(id);
     if (item === undefined) {
       throw new Error(`InboxService.acceptAsNote: item ${id} not found`);
@@ -241,6 +257,11 @@ export class InboxService {
     if (item.state !== InboxState.PENDING) {
       throw new Error(`InboxService.acceptAsNote: item ${id} state=${item.state}, not pending`);
     }
+    return this.acceptItem(item, notebookId);
+  }
+
+  /** 单条转存的统一管线（acceptAsNote 与 acceptMany 共用，语义完全一致） */
+  private async acceptItem(item: ClipboardItem, notebookId?: string): Promise<Note> {
     const contentType: string = looksLikeHtml(item.rawText) ? CONTENT_TYPE_HTML : 'text/markdown';
     const note: Note = await this.deps.notes.create({
       title: deriveTitle(item.rawText),
@@ -248,10 +269,11 @@ export class InboxService {
       source: noteSourceOf(item.entry),
       originHash: item.sha256,
       contentType,
+      notebookId,
     });
-    await this.deps.inbox.updateState(id, InboxState.ACCEPTED);
+    await this.deps.inbox.updateState(item.id, InboxState.ACCEPTED);
     this.deps.logger.log(LogLevel.INFO, 'inbox_accepted_as_note', {
-      id,
+      id: item.id,
       noteId: note.id,
       kind: item.kind,
       contentType,
@@ -259,14 +281,112 @@ export class InboxService {
     return note;
   }
 
-  /** 删除单条：用户明确删除即物理移除，不留副本（隐私口径同"一键清空"） */
+  /**
+   * 批量转存（Feature 4）：逐条走与单条完全相同的 acceptItem 管线；任一条失败
+   * 如实报告并继续处理其余（批次不因单条异常整体回滚——各条独立成立）。
+   *
+   * 口径（计划阶段 4）：批量仅作用于非敏感条目——capture 时已确认保存的敏感条目
+   * （sensitivity != NONE）跳过并单独列出，转由用户逐条处理；敏感确认只发生在
+   * 落盘前的显式决定，批量不能隐式替代。
+   */
+  async acceptMany(ids: readonly string[], notebookId?: string): Promise<BatchAcceptResult> {
+    const result: BatchAcceptResult = {
+      acceptedIds: [],
+      notes: [],
+      skippedSensitive: [],
+      skippedNotPending: [],
+      failed: [],
+    };
+    for (let i: number = 0; i < ids.length; i++) {
+      const id: string = ids[i];
+      try {
+        const item: ClipboardItem | undefined = await this.deps.inbox.getById(id);
+        if (item === undefined || item.state !== InboxState.PENDING) {
+          result.skippedNotPending.push(id);
+          continue;
+        }
+        if (item.sensitivity !== Sensitivity.NONE) {
+          result.skippedSensitive.push(id);
+          continue;
+        }
+        result.notes.push(await this.acceptItem(item, notebookId));
+        result.acceptedIds.push(id);
+      } catch (err) {
+        this.deps.logger.log(LogLevel.WARN, 'inbox_batch_accept_failed', { id, err: String(err) });
+        result.failed.push(id);
+      }
+    }
+    this.deps.logger.log(LogLevel.INFO, 'inbox_batch_accepted', {
+      accepted: result.acceptedIds.length,
+      skippedSensitive: result.skippedSensitive.length,
+      skippedNotPending: result.skippedNotPending.length,
+      failed: result.failed.length,
+    });
+    return result;
+  }
+
+  /**
+   * 批量删除（Feature 4）：逐条走与单条 remove 相同的 PENDING → DISCARDED 管线，
+   * 返回实际转 DISCARDED 条数（非 PENDING 幂等跳过；进垃圾桶可恢复）。
+   */
+  async discardMany(ids: readonly string[]): Promise<number> {
+    let count: number = 0;
+    for (let i: number = 0; i < ids.length; i++) {
+      if (await this.remove(ids[i])) {
+        count++;
+      }
+    }
+    if (count > 0) {
+      this.deps.logger.log(LogLevel.INFO, 'inbox_batch_discarded', { count });
+    }
+    return count;
+  }
+
+  /**
+   * 删除单条：PENDING → DISCARDED（进垃圾桶，可恢复；V5 垃圾桶口径）。
+   * 非 PENDING 条目返回 false（幂等：已弃置/已转存的条目不在收件箱时间线上）。
+   * 物理移除只在垃圾桶页「彻底删除/清空」发生（permanentlyDelete）。
+   */
   async remove(id: string): Promise<boolean> {
+    const item: ClipboardItem | undefined = await this.deps.inbox.getById(id);
+    if (item === undefined || item.state !== InboxState.PENDING) {
+      return false;
+    }
+    return this.deps.inbox.updateState(id, InboxState.DISCARDED);
+  }
+
+  /** 垃圾桶列表：已弃收件箱条目（按采集时间倒序） */
+  async listDiscarded(limit: number): Promise<ClipboardItem[]> {
+    return this.deps.inbox.listByState(InboxState.DISCARDED, limit);
+  }
+
+  /** 从垃圾桶恢复（回 PENDING 时间线） */
+  async restoreDiscarded(id: string): Promise<boolean> {
+    const item: ClipboardItem | undefined = await this.deps.inbox.getById(id);
+    if (item === undefined) {
+      return false;
+    }
+    if (item.state !== InboxState.DISCARDED) {
+      throw new Error(`InboxService.restoreDiscarded: item ${id} state=${item.state}, not discarded`);
+    }
+    return this.deps.inbox.updateState(id, InboxState.PENDING);
+  }
+
+  /** 彻底删除单条（仅限 DISCARDED 条目；物理移除不留副本） */
+  async permanentlyDelete(id: string): Promise<boolean> {
+    const item: ClipboardItem | undefined = await this.deps.inbox.getById(id);
+    if (item === undefined) {
+      return false;
+    }
+    if (item.state !== InboxState.DISCARDED) {
+      throw new Error(`InboxService.permanentlyDelete: item ${id} state=${item.state}, not discarded`);
+    }
     return this.deps.inbox.deleteById(id);
   }
 
-  /** 一键清空收件箱（全部状态）；返回清理条数 */
+  /** 一键清空收件箱（仅 PENDING 时间线；垃圾桶 DISCARDED 条目由垃圾桶页独立清空）；返回清理条数 */
   async clearAll(): Promise<number> {
-    const n: number = await this.deps.inbox.clearAll();
+    const n: number = await this.deps.inbox.clearPending();
     this.deps.logger.log(LogLevel.INFO, 'inbox_cleared', { count: n });
     return n;
   }

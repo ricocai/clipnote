@@ -3,6 +3,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   DevicePermissionStatus,
   ExportRecord,
+  NotebookService,
+  NotebookView,
   PasteboardPermissionState,
   PermissionStatusReport,
   describeExportRecord,
@@ -53,6 +55,11 @@ struct Settings {
   @State mcpCodeLine: string = '';
   @State mcpPendings: PendingPairingView[] = [];
   @State mcpClients: McpGrantedClientView[] = [];
+  /** 笔记本管理（Feature 1）：列表 + 新建/重命名/设默认/删除 */
+  @State notebookViews: NotebookView[] = [];
+  @State newNotebookName: string = '';
+  @State renamingNotebookId: string = '';
+  @State renameNotebookText: string = '';
 
   private readonly perm: DevicePermissionStatus = new DevicePermissionStatus();
   private readonly svc: AppServices = AppServices.get();
@@ -60,9 +67,104 @@ struct Settings {
   aboutToAppear(): void {
     this.refresh();
     this.loadExportRecords();
+    this.refreshNotebooks().catch((err: Error) => {
+      this.notice = `笔记本读取失败：${String(err)}`;
+    });
     this.refreshMcp().catch((err: Error) => {
       this.notice = `MCP 状态读取失败：${String(err)}`;
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // 笔记本管理（Feature 1）
+  // -------------------------------------------------------------------------
+
+  private async refreshNotebooks(): Promise<void> {
+    const svc: NotebookService = await this.svc.notebookService();
+    this.notebookViews = await svc.list();
+  }
+
+  private async createNotebook(): Promise<void> {
+    const name: string = this.newNotebookName.trim();
+    if (name.length === 0) {
+      this.notice = '先输入笔记本名称。';
+      return;
+    }
+    try {
+      const svc: NotebookService = await this.svc.notebookService();
+      await svc.create(name);
+      this.newNotebookName = '';
+      this.notice = `已创建笔记本「${name}」。`;
+      await this.refreshNotebooks();
+    } catch (err) {
+      this.notice = `创建失败：${String(err)}`;
+    }
+  }
+
+  private async setDefaultNotebook(id: string): Promise<void> {
+    try {
+      const svc: NotebookService = await this.svc.notebookService();
+      await svc.setDefault(id);
+      this.notice = '已切换默认笔记本（新建笔记将落入该笔记本）。';
+      await this.refreshNotebooks();
+    } catch (err) {
+      this.notice = `切换失败：${String(err)}`;
+    }
+  }
+
+  private startRenameNotebook(id: string, currentName: string): void {
+    this.renamingNotebookId = id;
+    this.renameNotebookText = currentName;
+  }
+
+  private async confirmRenameNotebook(): Promise<void> {
+    const name: string = this.renameNotebookText.trim();
+    if (name.length === 0) {
+      this.notice = '名称不能为空。';
+      return;
+    }
+    try {
+      const svc: NotebookService = await this.svc.notebookService();
+      await svc.rename(this.renamingNotebookId, name);
+      this.renamingNotebookId = '';
+      this.notice = '已重命名。';
+      await this.refreshNotebooks();
+    } catch (err) {
+      this.notice = `重命名失败：${String(err)}`;
+    }
+  }
+
+  private confirmDeleteNotebook(id: string, name: string, noteCount: number): void {
+    AlertDialog.show({
+      title: '删除笔记本',
+      message: noteCount > 0
+        ? `「${name}」内有 ${noteCount} 篇笔记（含垃圾桶条目），不能删除。请先把笔记移出或彻底删除。`
+        : `确认删除空笔记本「${name}」？笔记归属不受影响（本操作仅删除空分组）。`,
+      primaryButton: {
+        value: '取消',
+        action: () => {},
+      },
+      secondaryButton: noteCount > 0
+        ? undefined
+        : {
+            value: '删除',
+            fontColor: '#D4380D',
+            action: () => {
+              this.deleteNotebook(id);
+            },
+          },
+    });
+  }
+
+  private async deleteNotebook(id: string): Promise<void> {
+    try {
+      const svc: NotebookService = await this.svc.notebookService();
+      await svc.delete(id);
+      this.notice = '已删除笔记本。';
+      await this.refreshNotebooks();
+    } catch (err) {
+      this.notice = `删除失败：${String(err)}`;
+    }
   }
 
   /** 最近导出记录（设置页展示口径：每条一行，时间倒序，最多 5 条） */
@@ -375,6 +477,100 @@ struct Settings {
 
       Divider()
 
+      // 笔记本管理（Feature 1）：默认笔记本随库走；新建笔记落默认，笔记库顶部可过滤
+      Text('笔记本')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      Text('新建笔记落入默认笔记本；笔记库顶部可按笔记本过滤。非空笔记本（含垃圾桶条目）不能删除。')
+        .fontSize(11)
+        .fontColor('#8C8C8C')
+        .width('100%')
+      ForEach(this.notebookViews, (v: NotebookView) => {
+        Column({ space: 4 }) {
+          Row({ space: 8 }) {
+            Text(`${v.notebook.name}${v.notebook.isDefault ? '（默认）' : ''}`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            Text(`${v.noteCount} 篇`)
+              .fontSize(11)
+              .fontColor('#8C8C8C')
+          }
+          .width('100%')
+          Row({ space: 12 }) {
+            if (!v.notebook.isDefault) {
+              Text('设为默认')
+                .fontSize(13)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  this.setDefaultNotebook(v.notebook.id);
+                })
+            }
+            Text('重命名')
+              .fontSize(13)
+              .fontColor('#1F6FEB')
+              .onClick(() => {
+                this.startRenameNotebook(v.notebook.id, v.notebook.name);
+              })
+            if (!v.notebook.builtIn) {
+              Text('删除')
+                .fontSize(13)
+                .fontColor('#D4380D')
+                .onClick(() => {
+                  this.confirmDeleteNotebook(v.notebook.id, v.notebook.name, v.noteCount);
+                })
+            }
+          }
+          .width('100%')
+          if (this.renamingNotebookId === v.notebook.id) {
+            Row({ space: 8 }) {
+              TextInput({ text: this.renameNotebookText })
+                .fontSize(13)
+                .layoutWeight(1)
+                .onChange((value: string) => {
+                  this.renameNotebookText = value;
+                })
+              Text('确定')
+                .fontSize(13)
+                .fontColor('#1F6FEB')
+                .onClick(() => {
+                  this.confirmRenameNotebook();
+                })
+              Text('取消')
+                .fontSize(13)
+                .fontColor('#8C8C8C')
+                .onClick(() => {
+                  this.renamingNotebookId = '';
+                })
+            }
+            .width('100%')
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding(10)
+        .backgroundColor('#F5F5F5')
+        .borderRadius(8)
+      }, (v: NotebookView) => v.notebook.id)
+      Row({ space: 8 }) {
+        TextInput({ placeholder: '新笔记本名称', text: this.newNotebookName })
+          .fontSize(13)
+          .layoutWeight(1)
+          .onChange((value: string) => {
+            this.newNotebookName = value;
+          })
+        Button('新建')
+          .fontSize(13)
+          .height(32)
+          .onClick(() => {
+            this.createNotebook();
+          })
+      }
+      .width('100%')
+
       // 可读导出（S4-2，V1.4 F06）：与"可恢复备份"是两条路径，文案必须区分
       Text('可读导出（不是备份）')
         .fontSize(14)
@@ -538,6 +734,19 @@ struct Settings {
           }, (c: McpGrantedClientView) => c.clientId)
         }
       }
+
+      // 垃圾桶（Feature 2）：已删笔记与已弃收件箱条目的恢复/彻底删除出口
+      Text('垃圾桶')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      Text('查看已删笔记与已弃收件箱条目（可恢复或彻底删除）')
+        .fontSize(13)
+        .fontColor('#1F6FEB')
+        .width('100%')
+        .onClick(() => {
+          router.pushUrl({ url: 'pages/TrashPage' });
+        })
 
       // MCP 访问审计（S6-1，设计 §4.5.5）：只读查询页，只展示元数据
       Text('MCP 访问审计')

@@ -131,6 +131,113 @@ export class NoteService {
     return this.deps.notes.restore(id);
   }
 
+  /**
+   * 彻底删除（垃圾桶页）：物理移除，附件引用交既有 orphan GC（NoteRepository.purge 口径）。
+   * 只作用于回收站条目——活体笔记调用即拒（防误删，UI 也不该有此路径）。
+   */
+  async purge(id: NoteId): Promise<boolean> {
+    const existing: Note | undefined = await this.deps.notes.getById(id, true);
+    if (existing === undefined) {
+      return false;
+    }
+    if (existing.deletedAtMs === undefined) {
+      throw new Error(`NoteService.purge: note ${id} is not in trash`);
+    }
+    const purged: boolean = await this.deps.notes.purge(id);
+    if (purged) {
+      this.deps.logger.log(LogLevel.INFO, 'note_purged', { id });
+    }
+    return purged;
+  }
+
+  /**
+   * 多选合并（Feature 3）：≥2 篇活体笔记按传入顺序（= 列表顺序）拼接正文
+   * （`\n\n---\n\n` 分隔），保留首篇（标题沿用首篇，updated_at 刷新、revision +1），
+   * 其余软删除进垃圾桶（恢复后内容独立：其附件引用行保留，恢复后仍可渲染）。
+   *
+   * 归并语义（同一事务）：
+   *  - 附件：被合并篇的引用**复制**挂到保留篇（同 sha+role 已挂则跳过，ordinal 续排；
+   *    不移动原行——被合并篇恢复后图片仍可渲染；blob 回收由 orphan GC 按引用行兜底）；
+   *  - 标签：并集（addTag 幂等）；
+   *  - 标题/来源/内容类型：一律取首篇（来源冲突不新造口径）。
+   */
+  async mergeNotes(ids: NoteId[]): Promise<Note> {
+    if (ids.length < 2) {
+      throw new Error('NoteService.mergeNotes: need at least 2 notes');
+    }
+    const unique: NoteId[] = [];
+    for (let i: number = 0; i < ids.length; i++) {
+      if (unique.indexOf(ids[i]) >= 0) {
+        throw new Error(`NoteService.mergeNotes: duplicate note id ${ids[i]}`);
+      }
+      unique.push(ids[i]);
+    }
+    return transact(this.deps.db, async () => {
+      const keeperId: NoteId = unique[0];
+      const keeper: Note | undefined = await this.deps.notes.getById(keeperId);
+      if (keeper === undefined) {
+        throw new Error(`NoteService.mergeNotes: note ${keeperId} not found or deleted`);
+      }
+      const parts: string[] = [keeper.contentMd];
+      const rest: Note[] = [];
+      for (let i: number = 1; i < unique.length; i++) {
+        const n: Note | undefined = await this.deps.notes.getById(unique[i]);
+        if (n === undefined) {
+          throw new Error(`NoteService.mergeNotes: note ${unique[i]} not found or deleted`);
+        }
+        rest.push(n);
+        parts.push(n.contentMd);
+      }
+
+      // 附件并入保留篇（复制口径）：同 sha+role 已挂跳过，ordinal 从保留篇现状续排
+      const keeperAttachments: NoteAttachment[] = await this.deps.blobs.listAttachmentsOf(keeperId);
+      let maxOrdinal: number = -1;
+      const held: Set<string> = new Set<string>();
+      for (let i: number = 0; i < keeperAttachments.length; i++) {
+        const a: NoteAttachment = keeperAttachments[i];
+        if (a.ordinal > maxOrdinal) {
+          maxOrdinal = a.ordinal;
+        }
+        held.add(`${a.blobSha256}:${a.role}`);
+      }
+      for (let i: number = 0; i < rest.length; i++) {
+        const attachments: NoteAttachment[] = await this.deps.blobs.listAttachmentsOf(rest[i].id);
+        for (let k: number = 0; k < attachments.length; k++) {
+          const a: NoteAttachment = attachments[k];
+          const key: string = `${a.blobSha256}:${a.role}`;
+          if (held.has(key)) {
+            continue;
+          }
+          maxOrdinal++;
+          await this.deps.blobs.attach(keeperId, a.blobSha256, a.role, maxOrdinal);
+          held.add(key);
+        }
+      }
+
+      // 标签并集（addTag 幂等；写入发生在内容更新之前，任一步失败整体回滚）
+      for (let i: number = 0; i < rest.length; i++) {
+        const tags: Tag[] = await this.deps.notes.listTagsOfNote(rest[i].id);
+        for (let t: number = 0; t < tags.length; t++) {
+          await this.deps.notes.addTag(keeperId, tags[t].name);
+        }
+      }
+
+      // 首篇正文一次更新（revision 只 +1，updated_at 刷新）
+      const merged: Note = await this.deps.notes.updateContent(keeperId, parts.join('\n\n---\n\n'));
+
+      // 其余篇软删除进垃圾桶（恢复后内容独立：附件引用行随 note 保留）
+      for (let i: number = 0; i < rest.length; i++) {
+        await this.deps.notes.softDelete(rest[i].id);
+      }
+
+      this.deps.logger.log(LogLevel.INFO, 'notes_merged', {
+        keeperId,
+        mergedCount: rest.length,
+      });
+      return merged;
+    });
+  }
+
   /** 按目标集合同步标签：trim、去重、去空；差量绑定/解绑（addTag 本身幂等） */
   async setTags(noteId: NoteId, names: readonly string[]): Promise<Tag[]> {
     const desired: string[] = [];
@@ -197,9 +304,14 @@ export class NoteService {
     return this.deps.notes.getById(id);
   }
 
-  /** 列表页主查询：未删除，置顶优先、更新时间倒序 */
-  async listRecent(limit: number, offset?: number): Promise<Note[]> {
-    return this.deps.notes.listRecent(limit, offset);
+  /** 列表页主查询：未删除，置顶优先、更新时间倒序；notebookId 传入时按笔记本过滤 */
+  async listRecent(limit: number, offset?: number, notebookId?: string): Promise<Note[]> {
+    return this.deps.notes.listRecent(limit, offset, notebookId);
+  }
+
+  /** 回收站列表（垃圾桶页）：按删除时间倒序 */
+  async listDeleted(limit: number, offset?: number): Promise<Note[]> {
+    return this.deps.notes.listDeleted(limit, offset);
   }
 
   async listAttachmentsOf(noteId: NoteId): Promise<NoteAttachment[]> {

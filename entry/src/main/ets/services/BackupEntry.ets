@@ -48,7 +48,11 @@ const COPY_BUFFER_BYTES: number = 1024 * 1024;
 export class BackupEntry {
   private core: BackupEntryCore | undefined = undefined;
 
-  constructor(private readonly deps: BackupEntryDeps) {}
+  private readonly deps: BackupEntryDeps;
+
+  constructor(deps: BackupEntryDeps) {
+    this.deps = deps;
+  }
 
   /** 立即备份：打包 → 系统分享面板交接 */
   exportAndShare(): Promise<BackupExportOutcome> {
@@ -67,7 +71,7 @@ export class BackupEntry {
         shareBackupZip: async (zipPath: string, displayName: string): Promise<boolean> => {
           const ctx = AppContextOrThrow();
           const data: systemShare.SharedData = new systemShare.SharedData({
-            utd: utd.UniformDataType.ZIP,
+            utd: utd.UniformDataType.ZIP_ARCHIVE,
             uri: fileUri.getUriFromPath(zipPath),
             title: displayName,
             description: BACKUP_SHARE_DESCRIPTION,
@@ -83,7 +87,7 @@ export class BackupEntry {
           const ctx = AppContextOrThrow();
           const dp: picker.DocumentViewPicker = new picker.DocumentViewPicker(ctx);
           const uris: string[] = await dp.select({
-            selectMode: picker.SelectMode.FILE_MODE,
+            selectMode: picker.DocumentSelectMode.FILE,
             fileSuffixFilters: ['.zip'],
           });
           return uris.length > 0 ? uris[0] : undefined;

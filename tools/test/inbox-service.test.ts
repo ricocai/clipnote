@@ -170,19 +170,50 @@ test('InboxService: 存为笔记按正文判定 contentType（HTML 文档 → te
   assert.equal((await f.svc.acceptAsNote(prose.item.id)).contentType, 'text/markdown');
 });
 
-test('InboxService: 单条删除（物理）与一键清空', async () => {
+test('InboxService: 单条删除进垃圾桶（DISCARDED）、一键清空只清时间线', async () => {
   const f = await makeFixture();
   const a = await f.svc.capture({ text: '内容甲', entry: ClipEntry.MANUAL });
   f.clock.advance(4000);
   await f.svc.capture({ text: '内容乙', entry: ClipEntry.MANUAL });
 
   assert.equal(await f.svc.remove(a.item.id), true);
-  assert.equal(await f.svc.remove(a.item.id), false);
-  assert.equal(await f.inbox.getById(a.item.id), undefined);
+  assert.equal(await f.svc.remove(a.item.id), false); // 幂等：已在垃圾桶
+  const discarded = await f.inbox.getById(a.item.id);
+  assert.equal(discarded?.state, InboxState.DISCARDED); // 进垃圾桶不物理删
   assert.equal(await f.svc.pendingCount(), 1);
 
-  assert.equal(await f.svc.clearAll(), 1);
+  assert.equal(await f.svc.clearAll(), 1); // 只清 PENDING，垃圾桶保留
   assert.equal(await f.svc.pendingCount(), 0);
+  assert.equal((await f.svc.listDiscarded(10)).length, 1); // 甲仍在垃圾桶
+});
+
+test('InboxService: 垃圾桶生命周期 —— 恢复回时间线 / 彻底删除 / 弃置条目不参与去重', async () => {
+  const f = await makeFixture();
+  const a = await f.svc.capture({ text: '弃置又恢复的内容', entry: ClipEntry.MANUAL });
+
+  // 弃置 → 垃圾桶可见
+  assert.equal(await f.svc.remove(a.item.id), true);
+  const trashed = await f.svc.listDiscarded(10);
+  assert.equal(trashed.length, 1);
+  assert.equal(trashed[0].id, a.item.id);
+
+  // 同内容再采集：弃置条目不参与去重，正常入库（与笔记软删同口径）
+  f.clock.advance(4000);
+  const again = await f.svc.capture({ text: '弃置又恢复的内容', entry: ClipEntry.MANUAL });
+  assert.equal(again.kind, CaptureKind.PERSISTED);
+  assert.equal(await f.svc.pendingCount(), 1);
+
+  // 恢复 → 回 PENDING 时间线
+  assert.equal(await f.svc.restoreDiscarded(a.item.id), true);
+  assert.equal(await f.svc.pendingCount(), 2);
+  assert.equal((await f.svc.listDiscarded(10)).length, 0);
+
+  // 恢复后再弃置，彻底删除 → 物理消失
+  assert.equal(await f.svc.remove(a.item.id), true);
+  assert.equal(await f.svc.permanentlyDelete(a.item.id), true);
+  assert.equal(await f.inbox.getById(a.item.id), undefined);
+  // 非 DISCARDED 条目拒绝彻底删除（防误删活体时间线）
+  await assert.rejects(() => f.svc.permanentlyDelete(again.item.id), /not discarded/);
 });
 
 test('InboxService: 空内容与幂等合并如实上报', async () => {
@@ -253,7 +284,8 @@ test('Q4: 已存为笔记的内容（收件箱条目已清理）再采集 → �
   assert.equal(r.kind, CaptureKind.PERSISTED);
   await f.svc.acceptAsNote(r.item.id);
   // 收件箱条目被用户物理清理（笔记仍在）——去重只能命中笔记侧 origin_hash
-  await f.svc.remove(r.item.id);
+  // （svc.remove 现为 DISCARDED 软删口径；本场景需要物理移除，直走仓储）
+  await f.inbox.deleteById(r.item.id);
 
   f.clock.advance(4000);
   const svc2 = await rebuildService(f);
@@ -267,7 +299,8 @@ test('Q4: 笔记已移入回收站（软删）则不参与去重，同内容重�
   const f = await makeFixture();
   const r = await f.svc.capture({ text: '删掉后又会复制的内容', entry: ClipEntry.MANUAL });
   const note = await f.svc.acceptAsNote(r.item.id);
-  await f.svc.remove(r.item.id);
+  // 物理清掉收件箱行，隔离笔记侧去重变量（svc.remove 现为 DISCARDED 软删口径）
+  await f.inbox.deleteById(r.item.id);
   await f.notes.softDelete(note.id); // 用户把笔记移入回收站
 
   f.clock.advance(4000);
@@ -312,4 +345,78 @@ test('敏感命中规则的用户可读说明', () => {
   assert.equal(sensitivityReasonLabel('cn_id_card'), '身份证号');
   // 未知 id 原样返回，不静默吞掉
   assert.equal(sensitivityReasonLabel('some_future_rule'), 'some_future_rule');
+});
+
+// ---------------------------------------------------------------------------
+// Feature 4：收件箱批量操作（acceptMany / discardMany）
+// ---------------------------------------------------------------------------
+
+test('acceptMany：非敏感条目批量转存到指定笔记本，敏感条目跳过且逐条列出', async () => {
+  const f = await makeFixture();
+  // 造数据：2 条普通 + 1 条已确认保存的敏感（验证码）
+  const a = await f.svc.capture({ text: '批量条目 A', entry: ClipEntry.MANUAL });
+  const b = await f.svc.capture({ text: '批量条目 B', entry: ClipEntry.SHARE });
+  f.clock.advance(1000);
+  const s = await f.svc.capture({ text: '您的验证码：123456', entry: ClipEntry.MANUAL });
+  assert.equal(s.kind, CaptureKind.PENDING_CONFIRM);
+  await f.svc.confirmSave(s.item);
+
+  // 建第二个笔记本（V5 后 default nb-default 已存在）
+  const nbId = 'nb-test-batch';
+  await f.db.execute(
+    `INSERT INTO notebook (id, name, built_in, is_default, created_at) VALUES (?, ?, 0, 0, ?)`,
+    [nbId, '批量测试本', f.clock.nowMs()],
+  );
+
+  const r = await f.svc.acceptMany([a.item.id, b.item.id, s.item.id, 'no-such-id'], nbId);
+  assert.deepEqual(r.acceptedIds, [a.item.id, b.item.id]);
+  assert.equal(r.notes.length, 2);
+  assert.equal(r.skippedSensitive.length, 1);
+  assert.equal(r.skippedSensitive[0], s.item.id);
+  assert.deepEqual(r.skippedNotPending, ['no-such-id']);
+  assert.equal(r.failed.length, 0);
+
+  // 转存的笔记落在指定笔记本；条目转 ACCEPTED 离开时间线
+  assert.equal(r.notes[0].notebookId, nbId);
+  assert.equal(r.notes[0].source, NoteSource.CLIPBOARD); // MANUAL 入口
+  assert.equal(r.notes[1].notebookId, nbId);
+  assert.equal(r.notes[1].source, NoteSource.SHARE); // SHARE 入口
+  assert.equal(await f.svc.pendingCount(), 1); // 只剩敏感条目
+  assert.ok(f.logger.has('inbox_batch_accepted'));
+});
+
+test('acceptMany：不指定笔记本落默认笔记本；acceptAsNote 单条语义保持不变', async () => {
+  const f = await makeFixture();
+  const a = await f.svc.capture({ text: '默认本条目', entry: ClipEntry.MANUAL });
+  const b = await f.svc.capture({ text: '单条转存', entry: ClipEntry.MANUAL });
+
+  const r = await f.svc.acceptMany([a.item.id]);
+  assert.equal(r.acceptedIds.length, 1);
+  assert.equal(r.notes[0].notebookId, 'nb-default');
+
+  const single = await f.svc.acceptAsNote(b.item.id);
+  assert.equal(single.notebookId, 'nb-default');
+  assert.equal(single.contentMd, '单条转存');
+  assert.equal(await f.svc.pendingCount(), 0);
+});
+
+test('discardMany：PENDING → DISCARDED 进垃圾桶，可恢复；非 PENDING 幂等跳过', async () => {
+  const f = await makeFixture();
+  const a = await f.svc.capture({ text: '批量删 A', entry: ClipEntry.MANUAL });
+  const b = await f.svc.capture({ text: '批量删 B', entry: ClipEntry.MANUAL });
+  const c = await f.svc.capture({ text: '批量删 C', entry: ClipEntry.MANUAL });
+
+  // c 先单条转存（ACCEPTED），再进批量删除名单应被跳过
+  await f.svc.acceptAsNote(c.item.id);
+
+  const n = await f.svc.discardMany([a.item.id, b.item.id, c.item.id, 'no-such-id']);
+  assert.equal(n, 2);
+  assert.equal(await f.svc.pendingCount(), 0);
+  const discarded = await f.svc.listDiscarded(10);
+  assert.equal(discarded.length, 2);
+
+  // 垃圾桶可恢复（回 PENDING 时间线）
+  assert.equal(await f.svc.restoreDiscarded(discarded[0].id), true);
+  assert.equal(await f.svc.pendingCount(), 1);
+  assert.ok(f.logger.has('inbox_batch_discarded'));
 });

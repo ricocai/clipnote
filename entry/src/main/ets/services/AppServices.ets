@@ -11,6 +11,7 @@ import {
   ExportService,
   HilogLogger,
   InboxService,
+  NotebookService,
   NoteService,
   ReadableExportResult,
   SandboxFileStore,
@@ -50,6 +51,7 @@ export class AppServices {
 
   private inboxSvc: InboxService | undefined = undefined;
   private noteSvc: NoteService | undefined = undefined;
+  private notebookSvc: NotebookService | undefined = undefined;
   private shareSvc: ShareIntakeService | undefined = undefined;
   private mcpSvc: McpService | undefined = undefined;
   private appVersion: string | undefined = undefined;
@@ -105,6 +107,21 @@ export class AppServices {
       });
     }
     return this.noteSvc;
+  }
+
+  /** 笔记本服务（V5 / Feature 1）：与笔记服务共用同一数据层运行时 */
+  async notebookService(): Promise<NotebookService> {
+    if (this.notebookSvc === undefined) {
+      const rt: AppDataRuntime = await AppDataRuntime.whenReady();
+      this.notebookSvc = new NotebookService({
+        db: rt.executor,
+        notes: rt.notes,
+        clock: this.clock,
+        random: this.random,
+        logger: this.logger,
+      });
+    }
+    return this.notebookSvc;
   }
 
   /**

@@ -125,11 +125,27 @@ export interface Note {
   readonly updatedAtMs: number;
   /** 软删除时间；undefined 表示未删除。搜索结果与备份快照需排除 */
   readonly deletedAtMs?: number;
+  /** 所属笔记本（V5 起；升级库由迁移回填默认笔记本 nb-default） */
+  readonly notebookId?: string;
 }
 
 export interface Tag {
   readonly id: string;
   readonly name: string;
+}
+
+/** 内置默认笔记本固定 id（V5 迁移创建；删除保护的事实源） */
+export const DEFAULT_NOTEBOOK_ID: string = 'nb-default';
+
+/** 笔记本（V5）：笔记的分组容器；默认笔记本随库走（is_default=1 恰一行） */
+export interface Notebook {
+  readonly id: string;
+  readonly name: string;
+  /** 内置行（默认笔记本）：不可删除 */
+  readonly builtIn: boolean;
+  /** 当前默认笔记本：新建笔记缺省归属 */
+  readonly isDefault: boolean;
+  readonly createdAtMs: number;
 }
 
 // ---------------------------------------------------------------------------

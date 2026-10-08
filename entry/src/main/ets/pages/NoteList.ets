@@ -1,5 +1,5 @@
 import { router } from '@kit.ArkUI';
-import { CONTENT_TYPE_HTML, htmlToPlainText, Note, NoteService } from 'common';
+import { CONTENT_TYPE_HTML, htmlToPlainText, Notebook, NotebookService, Note, NoteService } from 'common';
 import { AppServices } from '../services/AppServices';
 import { flatPreview, relativeTimeLabel } from '../ui/Format';
 
@@ -27,6 +27,9 @@ interface NoteRow {
   readonly tagsLabel: string;
   readonly timeLabel: string;
   readonly pinned: boolean;
+  /** ForEach key 组成部分：置顶/编辑/合并都会刷新 updated_at，key 随之变化即强制重建行组件，
+   否则 ArkUI ForEach 同 key 只移动组件不重渲染（置顶星标与合并预览会陈旧） */
+  readonly updatedAtMs: number;
   /** 'text/html' 行进受控展示页（S3-3），只读、无编辑入口 */
   readonly contentType: string;
 }
@@ -40,9 +43,13 @@ struct NoteList {
   /** 多选导出模式（S4-2 列表多选入口）：点行切换选中而非进阅读页 */
   @State selecting: boolean = false;
   @State selectedIds: string[] = [];
+  /** 笔记本过滤（Feature 1）：'' = 全部笔记本 */
+  @State notebooks: Notebook[] = [];
+  @State activeNotebookId: string = '';
 
   private readonly svc: AppServices = AppServices.get();
   private noteSvc: NoteService | undefined = undefined;
+  private notebookSvc: NotebookService | undefined = undefined;
 
   aboutToAppear(): void {
     this.initData();
@@ -56,6 +63,8 @@ struct NoteList {
   private async initData(): Promise<void> {
     try {
       this.noteSvc = await this.svc.noteService();
+      this.notebookSvc = await this.svc.notebookService();
+      await this.refreshNotebooks();
       await this.refresh();
       this.dataReady = true;
     } catch (err) {
@@ -63,12 +72,28 @@ struct NoteList {
     }
   }
 
+  private async refreshNotebooks(): Promise<void> {
+    if (this.notebookSvc === undefined) {
+      return;
+    }
+    const views = await this.notebookSvc.list();
+    this.notebooks = views.map((v) => v.notebook);
+  }
+
+  /** 切换笔记本过滤：'' 为全部 */
+  private async selectNotebook(id: string): Promise<void> {
+    this.activeNotebookId = id;
+    await this.refresh();
+  }
+
   private async refresh(): Promise<void> {
     const svc: NoteService | undefined = this.noteSvc;
     if (svc === undefined) {
       return;
     }
-    const notes: Note[] = await svc.listRecent(NOTE_PAGE_LIMIT);
+    const notes: Note[] = this.activeNotebookId.length === 0
+      ? await svc.listRecent(NOTE_PAGE_LIMIT)
+      : await svc.listRecent(NOTE_PAGE_LIMIT, undefined, this.activeNotebookId);
     const built: NoteRow[] = [];
     for (let i: number = 0; i < notes.length; i++) {
       const n: Note = notes[i];
@@ -85,6 +110,7 @@ struct NoteList {
         tagsLabel: tagText,
         timeLabel: relativeTimeLabel(n.updatedAtMs),
         pinned: n.pinned,
+        updatedAtMs: n.updatedAtMs,
         contentType: n.contentType,
       });
     }
@@ -134,6 +160,55 @@ struct NoteList {
       this.exitSelecting();
     } catch (err) {
       this.notice = `导出失败：${String(err)}`;
+    }
+  }
+
+  /** 按列表顺序取所选 id（合并的正文拼接顺序 = 列表顺序） */
+  private selectedIdsInListOrder(): string[] {
+    const ordered: string[] = [];
+    for (let i: number = 0; i < this.rows.length; i++) {
+      if (this.selectedIds.indexOf(this.rows[i].id) >= 0) {
+        ordered.push(this.rows[i].id);
+      }
+    }
+    return ordered;
+  }
+
+  /** 多选合并（Feature 3）：确认文案如实说明其余 N-1 篇的去向（垃圾桶，可恢复） */
+  private confirmMergeSelected(): void {
+    const n: number = this.selectedIds.length;
+    if (n < 2) {
+      this.notice = '合并至少需要勾选 2 篇笔记。';
+      return;
+    }
+    AlertDialog.show({
+      title: '合并笔记',
+      message: `将按列表顺序合并 ${n} 篇笔记：正文拼接到首篇（其余 ${n - 1} 篇移入垃圾桶，可从垃圾桶恢复）。`,
+      primaryButton: {
+        value: '取消',
+        action: () => {},
+      },
+      secondaryButton: {
+        value: '合并',
+        action: () => {
+          this.mergeSelected();
+        },
+      },
+    });
+  }
+
+  private async mergeSelected(): Promise<void> {
+    if (this.noteSvc === undefined) {
+      return;
+    }
+    try {
+      const ordered: string[] = this.selectedIdsInListOrder();
+      const merged: Note = await this.noteSvc.mergeNotes(ordered);
+      this.notice = `已合并 ${ordered.length} 篇到《${merged.title}》（其余已入垃圾桶，可恢复）。`;
+      this.exitSelecting();
+      await this.refresh();
+    } catch (err) {
+      this.notice = `合并失败：${String(err)}`;
     }
   }
 
@@ -262,6 +337,37 @@ struct NoteList {
       }
       .width('100%')
 
+      // 笔记本切换（Feature 1）：全部 + 各笔记本横向 tab；仅在有多个笔记本时展示
+      if (this.notebooks.length > 1) {
+        Scroll() {
+          Row({ space: 8 }) {
+            Text('全部')
+              .fontSize(13)
+              .fontColor(this.activeNotebookId.length === 0 ? '#FFFFFF' : '#1F6FEB')
+              .backgroundColor(this.activeNotebookId.length === 0 ? '#1F6FEB' : '#F0F0F0')
+              .borderRadius(6)
+              .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+              .onClick(() => {
+                this.selectNotebook('');
+              })
+            ForEach(this.notebooks, (nb: Notebook) => {
+              Text(nb.name)
+                .fontSize(13)
+                .fontColor(this.activeNotebookId === nb.id ? '#FFFFFF' : '#1F6FEB')
+                .backgroundColor(this.activeNotebookId === nb.id ? '#1F6FEB' : '#F0F0F0')
+                .borderRadius(6)
+                .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                .onClick(() => {
+                  this.selectNotebook(nb.id);
+                })
+            }, (nb: Notebook) => nb.id)
+          }
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+      }
+
       if (this.notice.length > 0) {
         Text(this.notice)
           .fontSize(13)
@@ -296,6 +402,16 @@ struct NoteList {
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .layoutWeight(1)
+                  // Feature 7：行内可见置顶切换（与滑动操作同走 setPinned；多选模式不打扰）
+                  if (!this.selecting) {
+                    Text(row.pinned ? '★' : '☆')
+                      .fontSize(18)
+                      .fontColor(row.pinned ? '#FA8C16' : '#BFBFBF')
+                      .padding({ left: 6, right: 2 })
+                      .onClick(() => {
+                        this.togglePin(row);
+                      })
+                  }
                 }
                 .width('100%')
                 Text(row.preview)
@@ -335,7 +451,7 @@ struct NoteList {
               }
             })
             .swipeAction(this.selecting ? undefined : { end: this.itemEnd(row) })
-          }, (row: NoteRow) => row.id)
+          }, (row: NoteRow) => `${row.id}_${row.updatedAtMs}`)
         }
         .layoutWeight(1)
         .width('100%')
@@ -348,6 +464,13 @@ struct NoteList {
             .fontSize(13)
             .fontColor('#595959')
             .layoutWeight(1)
+          Button('合并')
+            .fontSize(14)
+            .height(36)
+            .enabled(this.selectedIds.length >= 2)
+            .onClick(() => {
+              this.confirmMergeSelected();
+            })
           Button(`导出所选（可读 ZIP，非备份）`)
             .fontSize(14)
             .height(36)

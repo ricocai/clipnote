@@ -269,8 +269,8 @@ test('audit: schema v3 建立 mcp_audit 表并随迁移链路到达最新版本'
   const db = NodeSqliteExecutor.openMemory();
   const version: number = await new SchemaMigrator(db, new CapturingLogger()).migrate();
   assert.equal(version, DB_SCHEMA_VERSION);
-  // V3 = mcp_audit（S6-1）；V4 = export_record（S4-2）—— 版本钉随迁移链路前移
-  assert.equal(DB_SCHEMA_VERSION, 4);
+  // V3 = mcp_audit（S6-1）；V4 = export_record（S4-2）；V5 = notebook —— 版本钉随迁移链路前移
+  assert.equal(DB_SCHEMA_VERSION, 5);
   const tables = await db.query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'mcp_audit'`);
   assert.equal(tables.length, 1);
   const idx = await db.query(

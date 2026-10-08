@@ -127,6 +127,90 @@ test('moveToTrash：列表消失、可恢复、时间戳记录', async () => {
   assert.equal((await f.svc.listRecent(10)).length, 1);
 });
 
+test('mergeNotes：顺序拼接、附件并挂（同 sha 去重）、标签并集、被合并篇进垃圾桶且恢复后内容独立', async () => {
+  const f = await makeFixture();
+  const a = await f.svc.save({ title: '首篇', contentMd: '正文A' });
+  const b = await f.svc.save({ title: '第二篇', contentMd: '正文B' });
+  const c = await f.svc.save({ title: '第三篇', contentMd: '正文C' });
+
+  // 附件：A 挂 img1；B 挂 img1（同 sha）+ img2；C 无附件
+  const img1 = await f.svc.importImage(a.id, pngBytes(1), 'image/png');
+  await f.svc.importImage(b.id, pngBytes(1), 'image/png'); // 与 A 同字节同 sha
+  const img2 = await f.svc.importImage(b.id, pngBytes(2), 'image/png');
+
+  // 标签：A{阅读}, B{阅读,工作}, C{工作}
+  await f.svc.setTags(a.id, ['阅读']);
+  await f.svc.setTags(b.id, ['阅读', '工作']);
+  await f.svc.setTags(c.id, ['工作']);
+
+  const revBefore: number = a.revision;
+  const merged = await f.svc.mergeNotes([a.id, b.id, c.id]);
+
+  // 保留首篇：标题沿用、revision 只 +1、正文按顺序拼接
+  assert.equal(merged.id, a.id);
+  assert.equal(merged.title, '首篇');
+  assert.equal(merged.revision, revBefore + 1);
+  assert.equal(merged.contentMd, '正文A\n\n---\n\n正文B\n\n---\n\n正文C');
+  assert.ok(merged.updatedAtMs >= a.updatedAtMs);
+
+  // 附件并挂：img1 去重、img2 并入，共 2 条引用
+  const keeperAtts = await f.svc.listAttachmentsOf(a.id);
+  const shas = keeperAtts.map((x) => x.blobSha256).sort();
+  assert.deepEqual(shas, [img1.sha256, img2.sha256].sort());
+
+  // 标签并集
+  const tags = (await f.svc.listTagsOfNote(a.id)).map((t) => t.name).sort();
+  assert.deepEqual(tags, ['工作', '阅读']);
+
+  // 被合并篇进垃圾桶：活体列表只剩首篇，回收站可恢复且内容独立（附件引用行保留）
+  const live = (await f.svc.listRecent(10)).map((n) => n.id);
+  assert.deepEqual(live, [a.id]);
+  const trashedB = await f.notes.getById(b.id, true);
+  assert.notEqual(trashedB?.deletedAtMs, undefined);
+  const bAtts = await f.svc.listAttachmentsOf(b.id);
+  assert.equal(bAtts.length, 2, '被合并篇恢复后图片仍可渲染（引用行保留）');
+  const restoredB = await f.svc.restore(b.id);
+  assert.equal(restoredB.contentMd, '正文B');
+  assert.equal(restoredB.title, '第二篇');
+});
+
+test('mergeNotes：<2 篇、重复 id、含回收站/不存在条目都如实拒绝', async () => {
+  const f = await makeFixture();
+  const a = await f.svc.save({ title: 'a', contentMd: 'a' });
+  const b = await f.svc.save({ title: 'b', contentMd: 'b' });
+
+  await assert.rejects(() => f.svc.mergeNotes([a.id]), /at least 2/);
+  await assert.rejects(() => f.svc.mergeNotes([a.id, a.id]), /duplicate/);
+  await assert.rejects(() => f.svc.mergeNotes([a.id, 'no-such-note']), /not found/);
+  await f.svc.moveToTrash(b.id);
+  await assert.rejects(() => f.svc.mergeNotes([a.id, b.id]), /not found or deleted/);
+  // 拒绝路径零副作用：首篇正文不变
+  assert.equal((await f.svc.getById(a.id))?.contentMd, 'a');
+});
+
+test('purge：仅回收站条目可彻底删除；附件引用级联清理', async () => {
+  const f = await makeFixture();
+  const note = await f.svc.save({ title: 'x', contentMd: 'y' });
+  // 活体笔记拒绝彻底删除（防误删）
+  await assert.rejects(() => f.svc.purge(note.id), /not in trash/);
+
+  // 带附件进回收站后彻底删除：note 行、note_attachment 引用、FTS 索引一并消失
+  const img = await f.svc.importImage(note.id, pngBytes(9), 'image/png');
+  await f.svc.moveToTrash(note.id);
+  assert.equal(await f.svc.purge(note.id), true);
+  assert.equal(await f.notes.getById(note.id, true), undefined);
+  const attachRows = await f.db.query(
+    `SELECT note_id FROM note_attachment WHERE note_id = ?`, [note.id]);
+  assert.equal(attachRows.length, 0, '附件引用随级联删除，字节留交 orphan GC');
+  const ftsRows = await f.db.query(`SELECT rowid FROM note_fts WHERE title = 'x'`);
+  assert.equal(ftsRows.length, 0, 'FTS 索引随触发器清理');
+  // blob 记录与文件不在 purge 范围（orphan GC 职责）
+  assert.notEqual(await f.blobs.get(img.sha256), undefined);
+  // 重复 purge / 不存在 → false
+  assert.equal(await f.svc.purge(note.id), false);
+  assert.equal(await f.svc.purge('no-such-note'), false);
+});
+
 // ---------------------------------------------------------------------------
 // 标签同步
 // ---------------------------------------------------------------------------

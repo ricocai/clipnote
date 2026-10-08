@@ -14,7 +14,7 @@
  *  - DDL 一律 `IF NOT EXISTS`，保证重复执行安全。
  */
 
-export const DB_SCHEMA_VERSION: number = 4;
+export const DB_SCHEMA_VERSION: number = 5;
 
 export interface Migration {
   readonly version: number;
@@ -205,9 +205,44 @@ const MIGRATION_V4: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_export_record_created ON export_record (created_at)`,
 ];
 
+/**
+ * V5：笔记本（Feature 1）与垃圾桶支撑。
+ *
+ * 口径：
+ *  - notebook 表随库走（单设备单库，默认笔记本不写 preferences）；
+ *  - 内置默认笔记本固定 id `nb-default`（built_in=1, is_default=1），不可删；
+ *    created_at 记 0 —— 它由迁移而非用户动作创建，时间不携带业务语义；
+ *  - note.notebook_id 加列后同事务全量回填 nb-default：升级瞬间旧笔记归属默认笔记本，
+ *    新笔记由 NoteRepository.create 落当前默认（缺省查询 is_default=1）；
+ *  - 删除保护（非空/内置/当前默认拒删）在 NotebookService（core/notebooks.ts）执行。
+ */
+const MIGRATION_V5: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS notebook (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL UNIQUE,
+     built_in INTEGER NOT NULL DEFAULT 0,
+     is_default INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL
+   )`,
+
+  `ALTER TABLE note ADD COLUMN notebook_id TEXT`,
+
+  // 内置默认笔记本（幂等：重复执行或已有数据时不重复插入）
+  `INSERT INTO notebook (id, name, built_in, is_default, created_at)
+     SELECT 'nb-default', '默认笔记本', 1, 1, 0
+     WHERE NOT EXISTS (SELECT 1 FROM notebook WHERE id = 'nb-default')`,
+
+  // 旧笔记全量归属默认笔记本
+  `UPDATE note SET notebook_id = 'nb-default' WHERE notebook_id IS NULL`,
+
+  // 列表按笔记本过滤主路径
+  `CREATE INDEX IF NOT EXISTS idx_note_notebook ON note (notebook_id, deleted_at, updated_at)`,
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'init', statements: MIGRATION_V1 },
   { version: 2, name: 'note_fts_trigram', statements: MIGRATION_V2 },
   { version: 3, name: 'mcp_audit', statements: MIGRATION_V3 },
   { version: 4, name: 'export_record', statements: MIGRATION_V4 },
+  { version: 5, name: 'notebook', statements: MIGRATION_V5 },
 ];

@@ -73,16 +73,18 @@ export class InboxRepository {
   }
 
   /**
-   * 持久化去重查询（真机验收 Q4）：取时间窗内同内容摘要、同类型的最新一条（任意状态）。
+   * 持久化去重查询（真机验收 Q4）：取时间窗内同内容摘要、同类型的最新一条。
+   * DISCARDED（垃圾桶）条目不参与去重 —— 用户已弃置的内容再采集应得到新条目，
+   * 合并进弃置行会让新内容无声消失（与笔记侧软删不参与去重同一口径）。
    * 收件箱表规模受容量/保留期约束（PENDING ≤ 容量，全量 ≤ 保留期），窗口过滤 + LIMIT 1
    * 的代价有界，无需为 sha256 单独建索引。
    */
   async findBySha256Since(sha256: string, kind: ClipKind, sinceMs: number): Promise<ClipboardItem | undefined> {
     const rows: SqlRow[] = await this.deps.db.query(
       `SELECT ${ITEM_COLUMNS} FROM clipboard_item
-       WHERE sha256 = ? AND kind = ? AND captured_at >= ?
+       WHERE sha256 = ? AND kind = ? AND captured_at >= ? AND state != ?
        ORDER BY captured_at DESC LIMIT 1`,
-      [sha256, kind, sinceMs],
+      [sha256, kind, sinceMs, InboxState.DISCARDED],
     );
     if (rows.length === 0) {
       return undefined;
@@ -119,7 +121,16 @@ export class InboxRepository {
     return n;
   }
 
-  /** 一键清空收件箱；返回清理条数 */
+  /** 一键清空收件箱（仅 PENDING 时间线；DISCARDED 垃圾桶条目由垃圾桶页独立清空） */
+  async clearPending(): Promise<number> {
+    const n: number = await this.countWhere(`state = ?`, [InboxState.PENDING]);
+    if (n > 0) {
+      await this.deps.db.execute(`DELETE FROM clipboard_item WHERE state = ?`, [InboxState.PENDING]);
+    }
+    return n;
+  }
+
+  /** 物理清空全部状态（仅历史兼容路径使用；新口径见 clearPending） */
   async clearAll(): Promise<number> {
     const n: number = await this.countWhere(`1 = 1`, []);
     if (n > 0) {

@@ -17,10 +17,9 @@
 import {
   BackupExportResult,
   BackupService,
-  ILogger,
-  LogLevel,
   RestoreResult,
-} from 'common';
+} from 'common/src/main/ets/core/backup-service';
+import { ILogger, LogLevel } from 'common/src/main/ets/core/ports';
 
 export interface BackupEntryDeps {
   /** BackupService 提供者（AppServices 注入；数据层就绪后才可装配） */

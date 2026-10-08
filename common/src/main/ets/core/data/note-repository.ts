@@ -29,7 +29,7 @@ export class NoteConflictError extends Error {
   }
 }
 
-import { CONTENT_SCHEMA_VERSION, Note, NoteId, NoteSource, Tag } from '../model';
+import { CONTENT_SCHEMA_VERSION, DEFAULT_NOTEBOOK_ID, Note, NoteId, NoteSource, Tag } from '../model';
 import { IClock, ILogger, IRandom } from '../ports';
 import { uuidv7 } from '../id';
 import {
@@ -53,6 +53,8 @@ export interface NoteCreateInput {
   readonly source: NoteSource;
   /** 幂等来源摘要（分享/剪贴板转存）；可为空 */
   readonly originHash?: string;
+  /** 所属笔记本；缺省落当前默认笔记本（notebook.is_default=1，迁移保证存在） */
+  readonly notebookId?: string;
 }
 
 export interface NoteRepoDeps {
@@ -64,7 +66,7 @@ export interface NoteRepoDeps {
 
 const NOTE_COLUMNS: string =
   'id, title, content_md, content_type, source, origin_hash, revision, ' +
-  'content_schema_version, pinned, created_at, updated_at, deleted_at';
+  'content_schema_version, pinned, created_at, updated_at, deleted_at, notebook_id';
 
 export class NoteRepository {
   constructor(private readonly deps: NoteRepoDeps) {}
@@ -83,9 +85,10 @@ export class NoteRepository {
       pinned: false,
       createdAtMs: now,
       updatedAtMs: now,
+      notebookId: input.notebookId === undefined ? await this.defaultNotebookId() : input.notebookId,
     };
     await this.deps.db.execute(
-      `INSERT INTO note (${NOTE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO note (${NOTE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         note.id,
         note.title,
@@ -99,9 +102,30 @@ export class NoteRepository {
         note.createdAtMs,
         note.updatedAtMs,
         null,
+        nullify(note.notebookId),
       ],
     );
     return note;
+  }
+
+  /** 当前默认笔记本 id（V5 迁移保证恰一行；防御性回退内置 id，不在此处建表逻辑） */
+  private async defaultNotebookId(): Promise<string> {
+    const rows: SqlRow[] = await this.deps.db.query(
+      `SELECT id FROM notebook WHERE is_default = 1 LIMIT 1`,
+    );
+    if (rows.length === 0) {
+      return DEFAULT_NOTEBOOK_ID;
+    }
+    return reqString(rows[0], 'id');
+  }
+
+  /** 笔记本删除保护（NotebookService）：统计归属该笔记本的全部笔记（含软删条目） */
+  async countByNotebook(notebookId: string): Promise<number> {
+    const rows: SqlRow[] = await this.deps.db.query(
+      `SELECT COUNT(*) AS n FROM note WHERE notebook_id = ?`,
+      [notebookId],
+    );
+    return reqNumber(rows[0], 'n');
   }
 
   /** 默认排除软删除；includeDeleted=true 时可取到回收站条目 */
@@ -243,8 +267,34 @@ export class NoteRepository {
     return this.requireLive(id);
   }
 
-  /** 列表页主路径：未删除；置顶优先，其余按更新时间倒序；分页由 LIMIT/OFFSET 约束 */
-  async listRecent(limit: number, offset?: number): Promise<Note[]> {
+  /**
+   * 彻底删除（垃圾桶「彻底删除/清空」）：物理移除整行。
+   * 事务内执行；note_tag / note_attachment 由外键 ON DELETE CASCADE 清理，
+   * note_fts 由 trg_note_fts_delete 触发器清理；附件字节留交 BlobRepository 的
+   * orphan GC（引用消失 → 宽限期 → 回收），不在此处直接删文件。
+   */
+  async purge(id: NoteId): Promise<boolean> {
+    return transact(this.deps.db, async () => {
+      const existing: Note | undefined = await this.getById(id, true);
+      if (existing === undefined) {
+        return false;
+      }
+      await this.deps.db.execute(`DELETE FROM note WHERE id = ?`, [id]);
+      return true;
+    });
+  }
+
+  /** 列表页主路径：未删除；置顶优先，其余按更新时间倒序；分页由 LIMIT/OFFSET 约束。
+   *  notebookId 传入时只列该笔记本（NoteList 顶部笔记本切换过滤）。 */
+  async listRecent(limit: number, offset?: number, notebookId?: string): Promise<Note[]> {
+    if (notebookId !== undefined) {
+      return this.queryNotes(
+        `SELECT ${NOTE_COLUMNS} FROM note
+         WHERE deleted_at IS NULL AND notebook_id = ?
+         ORDER BY pinned DESC, updated_at DESC LIMIT ? OFFSET ?`,
+        [notebookId, limit, offset === undefined ? 0 : offset],
+      );
+    }
     return this.queryNotes(
       `SELECT ${NOTE_COLUMNS} FROM note WHERE deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC LIMIT ? OFFSET ?`,
       [limit, offset === undefined ? 0 : offset],
@@ -428,6 +478,7 @@ function rowToNote(row: SqlRow): Note {
     createdAtMs: reqNumber(row, 'created_at'),
     updatedAtMs: reqNumber(row, 'updated_at'),
     deletedAtMs: optNumber(row, 'deleted_at'),
+    notebookId: optString(row, 'notebook_id'),
   };
   return note;
 }

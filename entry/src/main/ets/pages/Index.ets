@@ -12,6 +12,8 @@ import {
   INBOX_LIST_LIMIT,
   InboxService,
   Note,
+  Notebook,
+  NotebookService,
   Sensitivity,
   ShareIntakeSummary,
   ShareRejectReason,
@@ -139,8 +141,15 @@ struct Index {
    */
   @State promptOpen: boolean = false;
 
+  /** 收件箱多选（Feature 4）：批量转存笔记 / 批量删除（→垃圾桶，可恢复） */
+  @State inboxSelecting: boolean = false;
+  @State inboxSelectedIds: string[] = [];
+  /** 笔记本列表（批量转存的目标选择器；仅一个笔记本时直存默认，不弹选择） */
+  @State notebooks: Notebook[] = [];
+
   private readonly svc: AppServices = AppServices.get();
   private inboxSvc: InboxService | undefined = undefined;
+  private notebookSvc: NotebookService | undefined = undefined;
   /** 剪贴板唯一接触面（S2-4）：hasData 只探测布尔；readText 只在用户手势后调用 */
   private readonly probe: SystemPasteboardProbe = new SystemPasteboardProbe();
   private readonly fgPrompt: ForegroundPromptController = new ForegroundPromptController();
@@ -166,6 +175,8 @@ struct Index {
     this.checkForeground();
     // 分享拉起已运行实例时本页可能已在显示（不走 aboutToAppear），这里兜底取积压
     this.drainShareNotices();
+    // 笔记本默认项可能在设置页变更（批量转存选择器与单条转存都要反映最新默认）
+    this.refreshNotebooks();
     this.refreshInbox();
   }
 
@@ -240,11 +251,21 @@ struct Index {
   private async initData(): Promise<void> {
     try {
       this.inboxSvc = await this.svc.inboxService();
+      this.notebookSvc = await this.svc.notebookService();
+      await this.refreshNotebooks();
       await this.refreshInbox();
       this.dataReady = true;
     } catch (err) {
       this.notice = `数据层初始化失败：${String(err)}`;
     }
+  }
+
+  private async refreshNotebooks(): Promise<void> {
+    if (this.notebookSvc === undefined) {
+      return;
+    }
+    const views = await this.notebookSvc.list();
+    this.notebooks = views.map((v) => v.notebook);
   }
 
   private async refreshInbox(): Promise<void> {
@@ -472,6 +493,95 @@ struct Index {
     await this.refreshInbox();
   }
 
+  // -------------------------------------------------------------------------
+  // 收件箱多选（Feature 4）
+  // -------------------------------------------------------------------------
+
+  private toggleInboxSelect(id: string): void {
+    if (this.inboxSelectedIds.indexOf(id) >= 0) {
+      this.inboxSelectedIds = this.inboxSelectedIds.filter((v: string) => v !== id);
+    } else {
+      this.inboxSelectedIds = this.inboxSelectedIds.concat([id]);
+    }
+  }
+
+  private exitInboxSelecting(): void {
+    this.inboxSelecting = false;
+    this.inboxSelectedIds = [];
+  }
+
+  private selectAllInbox(): void {
+    const all: string[] = [];
+    for (let i = 0; i < this.inbox.length; i++) {
+      all.push(this.inbox[i].id);
+    }
+    this.inboxSelectedIds = all;
+  }
+
+  /** 批量存为笔记：多笔记本时弹选择器（默认项标注），单笔记本直存默认 */
+  private startBatchAccept(): void {
+    if (this.inboxSelectedIds.length === 0) {
+      this.notice = '先勾选要转存的内容。';
+      return;
+    }
+    if (this.inboxSvc === undefined) {
+      return;
+    }
+    if (this.notebooks.length > 1) {
+      const sheets: SheetInfo[] = this.notebooks.map((nb: Notebook): SheetInfo => {
+        return {
+          title: nb.isDefault ? `${nb.name}（默认）` : nb.name,
+          action: (): void => {
+            this.doBatchAccept(nb.id);
+          },
+        };
+      });
+      ActionSheet.show({
+        title: '存入笔记本',
+        message: '所选内容将逐条转存为笔记（敏感内容仍需逐条处理）。',
+        sheets: sheets,
+      });
+    } else {
+      this.doBatchAccept(undefined);
+    }
+  }
+
+  private async doBatchAccept(notebookId?: string): Promise<void> {
+    if (this.inboxSvc === undefined) {
+      return;
+    }
+    try {
+      const ids: string[] = this.inboxSelectedIds.slice();
+      const r = await this.inboxSvc.acceptMany(ids, notebookId);
+      const parts: string[] = [`已转存 ${r.acceptedIds.length} 条为笔记`];
+      if (r.skippedSensitive.length > 0) {
+        parts.push(`${r.skippedSensitive.length} 条敏感内容未批量转存（请逐条处理）`);
+      }
+      if (r.failed.length > 0) {
+        parts.push(`${r.failed.length} 条转存失败（见日志）`);
+      }
+      this.notice = `${parts.join('；')}。`;
+      this.exitInboxSelecting();
+    } catch (err) {
+      this.notice = `批量转存失败：${String(err)}`;
+    }
+    await this.refreshInbox();
+  }
+
+  private async doBatchDiscard(): Promise<void> {
+    if (this.inboxSvc === undefined) {
+      return;
+    }
+    try {
+      const n: number = await this.inboxSvc.discardMany(this.inboxSelectedIds.slice());
+      this.notice = `已删除 ${n} 条（已入垃圾桶，可恢复）。`;
+      this.exitInboxSelecting();
+    } catch (err) {
+      this.notice = `批量删除失败：${String(err)}`;
+    }
+    await this.refreshInbox();
+  }
+
   build() {
     Column({ space: 12 }) {
       Row() {
@@ -625,16 +735,73 @@ struct Index {
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .layoutWeight(1)
-        Button('清空')
-          .fontSize(12)
-          .height(28)
-          .backgroundColor('#F5F5F5')
-          .fontColor('#D4380D')
+        Text('垃圾桶')
+          .fontSize(13)
+          .fontColor('#1F6FEB')
+          .margin({ right: 12 })
           .onClick(() => {
-            this.confirmClearAll();
+            router.pushUrl({ url: 'pages/TrashPage' });
           })
+        if (this.inboxSelecting) {
+          Text('全选')
+            .fontSize(13)
+            .fontColor('#1F6FEB')
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.selectAllInbox();
+            })
+          Text('取消')
+            .fontSize(13)
+            .fontColor('#8C8C8C')
+            .onClick(() => {
+              this.exitInboxSelecting();
+            })
+        } else {
+          Text('多选')
+            .fontSize(13)
+            .fontColor('#1F6FEB')
+            .margin({ right: 12 })
+            .onClick(() => {
+              this.inboxSelecting = true;
+            })
+          Button('清空')
+            .fontSize(12)
+            .height(28)
+            .backgroundColor('#F5F5F5')
+            .fontColor('#D4380D')
+            .onClick(() => {
+              this.confirmClearAll();
+            })
+        }
       }
       .width('100%')
+
+      // 多选操作条（Feature 4）：批量转存 / 批量删除（→垃圾桶，可恢复）
+      if (this.inboxSelecting) {
+        Row({ space: 10 }) {
+          Text(`已选 ${this.inboxSelectedIds.length} 条`)
+            .fontSize(13)
+            .fontColor('#595959')
+            .layoutWeight(1)
+          Button('存为笔记')
+            .fontSize(14)
+            .height(36)
+            .enabled(this.inboxSelectedIds.length > 0)
+            .onClick(() => {
+              this.startBatchAccept();
+            })
+          Button('删除')
+            .fontSize(14)
+            .height(36)
+            .backgroundColor('#F5F5F5')
+            .fontColor('#D4380D')
+            .enabled(this.inboxSelectedIds.length > 0)
+            .onClick(() => {
+              this.doBatchDiscard();
+            })
+        }
+        .width('100%')
+      }
 
       if (!this.dataReady) {
         Text('数据层初始化中…')
@@ -652,6 +819,11 @@ struct Index {
             ListItem() {
               Column({ space: 4 }) {
                 Row({ space: 6 }) {
+                  if (this.inboxSelecting) {
+                    Text(this.inboxSelectedIds.indexOf(row.id) >= 0 ? '☑' : '☐')
+                      .fontSize(16)
+                      .fontColor('#1F6FEB')
+                  }
                   Text(`${row.icon} ${row.kindLabel}`)
                     .fontSize(11)
                     .fontColor('#8C8C8C')
@@ -675,21 +847,24 @@ struct Index {
                     .fontSize(11)
                     .fontColor('#8C8C8C')
                     .layoutWeight(1)
-                  Button('存为笔记')
-                    .fontSize(12)
-                    .height(26)
-                    .onClick(() => {
-                      this.acceptAsNote(row.id);
-                    })
-                  Button('删除')
-                    .fontSize(12)
-                    .height(26)
-                    .backgroundColor('#F5F5F5')
-                    .fontColor('#D4380D')
-                    .margin({ left: 8 })
-                    .onClick(() => {
-                      this.removeItem(row.id);
-                    })
+                  // 多选模式下收起单条操作（批量操作条接管），避免两套删除语义并存
+                  if (!this.inboxSelecting) {
+                    Button('存为笔记')
+                      .fontSize(12)
+                      .height(26)
+                      .onClick(() => {
+                        this.acceptAsNote(row.id);
+                      })
+                    Button('删除')
+                      .fontSize(12)
+                      .height(26)
+                      .backgroundColor('#F5F5F5')
+                      .fontColor('#D4380D')
+                      .margin({ left: 8 })
+                      .onClick(() => {
+                        this.removeItem(row.id);
+                      })
+                  }
                 }
                 .width('100%')
               }
@@ -699,6 +874,11 @@ struct Index {
               .backgroundColor('#F5F5F5')
               .borderRadius(8)
             }
+            .onClick(() => {
+              if (this.inboxSelecting) {
+                this.toggleInboxSelect(row.id);
+              }
+            })
           }, (row: InboxRow) => row.id)
         }
         .layoutWeight(1)
