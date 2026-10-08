@@ -22,6 +22,11 @@
         "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
+        // 顺序连读（Feature 9）：锁屏后台继续 TTS 合成播放，由 GlobalPlayback
+        // 随播放态申请/释放长时任务（backgroundTaskManager AUDIO_PLAYBACK）
+        "backgroundModes": [
+          "audioPlayback"
+        ],
         "skills": [
           {
             "entities": [

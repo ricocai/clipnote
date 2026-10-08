@@ -1,3 +1,7 @@
+// 根构建配置模板——复制为 build-profile.json5 后，在 DevEco Studio
+// File > Project Structure > Signing Configs 里执行 "Automatically generate signing"
+// （或手动填写 material 五项路径与密码）。build-profile.json5 已被 .gitignore
+// 排除，真实凭据永不入库。
 {
   "app": {
     "signingConfigs": [
@@ -5,12 +9,12 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "/Users/xiaogangcai/.ohos/config/default_clipnote_N0w2FSe5nUNtgDF8bm9Tt8nKTmvzPAVeh3wB_NB7BkU=.cer",
+          "certpath": "<你的 .cer 证书绝对路径>",
           "keyAlias": "debugKey",
           "keyPassword": "",
-          "profile": "/Users/xiaogangcai/.ohos/config/default_clipnote_N0w2FSe5nUNtgDF8bm9Tt8nKTmvzPAVeh3wB_NB7BkU=.p7b",
+          "profile": "<你的 .p7b 描述文件绝对路径>",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "/Users/xiaogangcai/.ohos/config/default_clipnote_N0w2FSe5nUNtgDF8bm9Tt8nKTmvzPAVeh3wB_NB7BkU=.p12",
+          "storeFile": "<你的 .p12 密钥库绝对路径>",
           "storePassword": "",
         }
       }

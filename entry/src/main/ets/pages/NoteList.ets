@@ -1,6 +1,8 @@
 import { router } from '@kit.ArkUI';
 import { CONTENT_TYPE_HTML, htmlToPlainText, Notebook, NotebookService, Note, NoteService } from 'common';
 import { AppServices } from '../services/AppServices';
+import { PlaybackBroadcast, PlaybackListener } from '../services/GlobalPlayback';
+import { PlayingBar } from '../ui/PlayingBar';
 import { flatPreview, relativeTimeLabel } from '../ui/Format';
 
 /**
@@ -46,18 +48,38 @@ struct NoteList {
   /** 笔记本过滤（Feature 1）：'' = 全部笔记本 */
   @State notebooks: Notebook[] = [];
   @State activeNotebookId: string = '';
+  /** 正在朗读的笔记（Feature 5）：行高亮；播放事件驱动，页面销毁不影响播放 */
+  @State playingId: string = '';
 
   private readonly svc: AppServices = AppServices.get();
   private noteSvc: NoteService | undefined = undefined;
   private notebookSvc: NotebookService | undefined = undefined;
+  private playbackListener: PlaybackListener | undefined = undefined;
 
   aboutToAppear(): void {
     this.initData();
+    // 先同步一次当前状态（页面可能晚于播放创建），再订阅后续变化
+    const g = this.svc.globalPlayback();
+    this.playingId = g.playingNoteId;
+    this.playbackListener = (b: PlaybackBroadcast): void => {
+      this.playingId = b.noteId;
+    };
+    g.addListener(this.playbackListener);
+  }
+
+  aboutToDisappear(): void {
+    const l = this.playbackListener;
+    if (l !== undefined) {
+      this.svc.globalPlayback().removeListener(l);
+      this.playbackListener = undefined;
+    }
   }
 
   onPageShow(): void {
     // 从编辑页返回即刷新（"存为笔记"与列表打通的落地口径：列表反映最新状态）
     this.refresh();
+    // 补偿广播：隐藏期间浮标组件的 @State 更新不触发 build，回前台重放一次
+    this.svc.globalPlayback().replay();
   }
 
   private async initData(): Promise<void> {
@@ -396,7 +418,7 @@ struct NoteList {
                       .fontSize(16)
                       .fontColor('#1F6FEB')
                   }
-                  Text(`${row.pinned ? '📌 ' : ''}${row.contentType === CONTENT_TYPE_HTML ? '[HTML] ' : ''}${row.title}`)
+                  Text(`${row.pinned ? '📌 ' : ''}${this.playingId === row.id ? '🔊 ' : ''}${row.contentType === CONTENT_TYPE_HTML ? '[HTML] ' : ''}${row.title}`)
                     .fontSize(15)
                     .fontWeight(FontWeight.Medium)
                     .maxLines(1)
@@ -440,7 +462,8 @@ struct NoteList {
               .alignItems(HorizontalAlign.Start)
               .width('100%')
               .padding(10)
-              .backgroundColor('#F5F5F5')
+              // Feature 5：正在朗读的行高亮（蓝底 + 朗读标记），全局播放状态驱动
+              .backgroundColor(this.playingId === row.id ? '#E6F4FF' : '#F5F5F5')
               .borderRadius(8)
             }
             .onClick(() => {
@@ -481,6 +504,9 @@ struct NoteList {
         }
         .width('100%')
       }
+
+      // 全局朗读浮标（Feature 5）：正在朗读的篇跨页可见，点击标题回阅读页
+      PlayingBar()
     }
     .width('100%')
     .height('100%')

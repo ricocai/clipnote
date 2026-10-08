@@ -1,18 +1,17 @@
 import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { common } from '@kit.AbilityKit';
 import {
+  AppContextHolder,
   ATTACHMENT_SCHEME,
   attachmentRefOf,
   DocumentBlock,
   parseDocument,
+  rewriteAttachmentLinks,
+  SystemShareHandoff,
 } from 'common';
 import {
-  AvSessionControls,
   DEFAULT_TTS_SETTINGS,
-  PlaybackCommandSink,
   PlaybackState,
-  SpeechPlaybackController,
   SpeechPlan,
   SpeechPlanItem,
   TtsEngineCapability,
@@ -21,6 +20,8 @@ import {
   planSpeech,
 } from 'speech';
 import { AppServices } from '../services/AppServices';
+import { GlobalPlayback, PlaybackUiSink } from '../services/GlobalPlayback';
+import { PlayingBar } from '../ui/PlayingBar';
 import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
 
 /**
@@ -30,7 +31,9 @@ import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
  *  块模型 → planSpeech（规范化 + ≤300 字切段 + 块锚点）→ SpeechPlaybackController
  *  （有界队列 + 代际切换）→ 系统离线引擎（playType=1 直接播报）。
  * 高亮：onSegmentStart 回映射块下标 → reader.js highlight(data-cl-i 锚点)。
- * 播控：AvSessionControls（通知栏/锁屏指令、焦点中断 → interrupt 段边界暂停）。
+ * 播控：AVSession（通知栏/锁屏指令、焦点中断）与播放本体在 GlobalPlayback
+ * （第二批 Feature 5 全局化）：本页退页只解绑 UI 回调，朗读继续；浮标 PlayingBar
+ * 全局可见。顺序连读（Feature 9）换篇以 autoplay=1 参数跳入本页自动起播。
  * 进度口径：TTS-0 段播完按整段字符数回报，段落级高亮够用；段内进度属
  * playType=0 PCM 真机项（G4 §5-5），本页不实现。
  * 音色/语速（S5-4）：控制条内切换入口，直接接引擎层 updateSettings（收敛 →
@@ -54,6 +57,45 @@ import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
  * 平台 API 编译口径声明（同 G1/S3-1 纪律）：本文件未经设备编译，按 API 12（5.0.0(12)）
  * 文档口径编写；真机编译若遇签名差异，以 SDK 报错为准修正调用形态。
  */
+
+/**
+ * 阅读页 UI 回调装配（Feature 5）：ArkTS struct 字段不允许对象字面量初始化
+ * 接口，经本类实例装配；回调闭包绑定页面对象（同 ReaderJsBridge 模式）。
+ */
+class PagePlaybackSink implements PlaybackUiSink {
+  private readonly onState: (state: PlaybackState) => void;
+  private readonly onSeg: (item: SpeechPlanItem) => void;
+  private readonly onDone: () => void;
+  private readonly onErr: (reason: string) => void;
+
+  constructor(
+    onState: (state: PlaybackState) => void,
+    onSeg: (item: SpeechPlanItem) => void,
+    onDone: () => void,
+    onErr: (reason: string) => void,
+  ) {
+    this.onState = onState;
+    this.onSeg = onSeg;
+    this.onDone = onDone;
+    this.onErr = onErr;
+  }
+
+  onStateChange(state: PlaybackState): void {
+    this.onState(state);
+  }
+
+  onSegmentStart(item: SpeechPlanItem): void {
+    this.onSeg(item);
+  }
+
+  onPlanComplete(): void {
+    this.onDone();
+  }
+
+  onError(reason: string): void {
+    this.onErr(reason);
+  }
+}
 
 /** 未授权/缺失附件与远程请求的拦截响应：404 + 空体（不区分存在性，避免侧信道） */
 function blockedResponse(): WebResourceResponse {
@@ -133,11 +175,12 @@ struct NoteRead {
   private readonly tokenizer: ArkWebMarkdownTokenizer = new ArkWebMarkdownTokenizer();
   private renderStarted: boolean = false;
 
-  // ---- 朗读（S5-2） ----
+  // ---- 朗读（S5-2 + 第二批 Feature 5 全局化） ----
   private plan: SpeechPlan | undefined = undefined;
-  private playback: SpeechPlaybackController | undefined = undefined;
-  private readonly avControls: AvSessionControls = new AvSessionControls();
-  private speechOrdinal: number = 0;
+  /** 全局播放单例：控制器/AVSession/长时任务都在 GlobalPlayback，本页只租借 UI 回调 */
+  private readonly global: GlobalPlayback = AppServices.get().globalPlayback();
+  /** 连读 autoplay 参数（Feature 9）：进页解析完成后自动起播 */
+  private autoplay: boolean = false;
   @State playState: PlaybackState = 'idle';
   @State speechIndex: number = -1;
   @State speechNotice: string = '';
@@ -153,6 +196,27 @@ struct NoteRead {
   private readonly readerBridge: ReaderJsBridge = new ReaderJsBridge((blockIndex: number): void => {
     this.onBlockDoubleTap(blockIndex);
   });
+
+  /** 本页 UI 回调（Feature 5）：高亮/状态/错误进本页 @State；退页由 GlobalPlayback 解绑丢弃 */
+  private readonly uiSink: PlaybackUiSink = new PagePlaybackSink(
+    (state: PlaybackState): void => {
+      this.playState = state;
+      if (state === 'ready') {
+        this.speechIndex = -1;
+        this.highlightBlock(-1);
+      }
+    },
+    (item: SpeechPlanItem): void => {
+      this.speechIndex = item.segment.index;
+      this.highlightBlock(item.blockIndex);
+    },
+    (): void => {
+      this.highlightBlock(-1);
+    },
+    (reason: string): void => {
+      this.speechNotice = `朗读失败：${reason}`;
+    },
+  );
 
   /**
    * 段落双击 = 从该段开始朗读（Q2b）：块下标 → 覆盖该块的第一个朗读项
@@ -178,10 +242,19 @@ struct NoteRead {
       return;
     }
     this.speechNotice = '';
-    const ctl: SpeechPlaybackController = this.ensurePlayback();
-    void ctl.seekToSegment(target).then((): void => {
-      void ctl.play();
-    });
+    const thenSeekPlay = (): void => {
+      void this.global.seekToSegment(target).then((): void => {
+        void this.global.play();
+      });
+    };
+    if (!this.global.bindIfCurrent(this.noteId, this.uiSink)) {
+      void this.global.attach(this.noteId, this.title, this.plan as SpeechPlan, this.uiSink)
+        .then((): void => {
+          thenSeekPlay();
+        });
+      return;
+    }
+    thenSeekPlay();
   }
 
   aboutToAppear(): void {
@@ -191,9 +264,12 @@ struct NoteRead {
       if (v !== undefined && v !== null) {
         this.noteId = v;
       }
+      const auto: string | undefined = params['autoplay'];
+      if (auto === '1') {
+        this.autoplay = true; // 连读换篇（Feature 9）：解析完成后自动起播
+      }
     }
     this.loadNote();
-    this.attachAvSession();
     void this.probeTts();
   }
 
@@ -246,71 +322,27 @@ struct NoteRead {
     this.voiceSpeed = saved.speed;
   }
 
+  /**
+   * 退页（Feature 5 全局化核心）：只解绑 UI 回调——高亮丢失无妨，播放本体
+   * 跨页继续；浮标（PlayingBar）与通知栏播控（GlobalPlayback 的 AVSession）
+   * 接管控制权。彻底停止走浮标/通知栏的「停止」或本页控制条「停止」。
+   */
   aboutToDisappear(): void {
-    void this.avControls.stop();
-    void this.playback?.stop();
+    this.global.detachUi();
     this.highlightBlock(-1);
   }
 
-  /** AVSession 播控（S5-2）：通知栏/锁屏指令映射到控制器；焦点中断 → 段边界暂停 */
-  private attachAvSession(): void {
-    const sink: PlaybackCommandSink = {
-      play: (): void => {
-        if (!this.ttsAvailable || !this.canSpeak()) {
-          return; // 引擎不可用/无朗读计划时不触发（S5-4 禁用口径；play 对空计划会 throw）
-        }
-        this.speechNotice = '';
-        void this.ensurePlayback().play();
-      },
-      pause: (): void => {
-        void this.playback?.pause();
-      },
-      next: (): void => {
-        void this.playback?.next();
-      },
-      prev: (): void => {
-        void this.playback?.prev();
-      },
-      stop: (): void => {
-        void this.playback?.stop();
-      },
-    };
-    void this.avControls.start(
-      getContext(this) as common.Context,
-      sink,
-      (reason: string): void => {
-        void this.playback?.interrupt(reason);
-        this.speechNotice = `已暂停：${reason}`;
-      },
-    );
-  }
-
-  /** 控制器惰性创建：回调全部 @State 绑定，调度逻辑不在本页（同 AppServices 纪律） */
-  private ensurePlayback(): SpeechPlaybackController {
-    if (this.playback === undefined) {
-      this.playback = new SpeechPlaybackController(this.svc.speechEngine(), {
-        onStateChange: (state: PlaybackState): void => {
-          this.playState = state;
-          if (state === 'ready') {
-            this.speechIndex = -1;
-            this.highlightBlock(-1);
-          }
-        },
-        onSegmentStart: (item: SpeechPlanItem): void => {
-          this.speechIndex = item.segment.index;
-          this.highlightBlock(item.blockIndex);
-        },
-        onProgress: (): void => undefined,
-        onSegmentFinish: (): void => undefined,
-        onPlanComplete: (): void => {
-          this.highlightBlock(-1);
-        },
-        onError: (reason: string): void => {
-          this.speechNotice = `朗读失败：${reason}`;
-        },
-      });
+  /** 朗读入口（Feature 5）：本篇已有活动播放（重进）接管续播，否则换篇装载后起播 */
+  private startReading(): void {
+    this.speechNotice = '';
+    if (this.global.bindIfCurrent(this.noteId, this.uiSink)) {
+      void this.global.play();
+      return;
     }
-    return this.playback;
+    const plan: SpeechPlan = this.plan as SpeechPlan;
+    void this.global.attach(this.noteId, this.title, plan, this.uiSink).then((): void => {
+      void this.global.play();
+    });
   }
 
   /** 段落级高亮：块下标 → reader.js 锚点（data-cl-i）；-1 清除。退页销毁后调用不致命 */
@@ -387,11 +419,16 @@ struct NoteRead {
         // 否则「probeTts 先于 plan 完成」时序下控制条永远不出现（真机/模拟器实测）
         this.planReady = this.canSpeak();
         if (this.planReady) {
-          this.speechOrdinal++;
-          const ctl: SpeechPlaybackController = this.ensurePlayback();
-          void ctl.load(this.plan as SpeechPlan).then((): void => {
-            void this.avControls.updateMetadata(this.title, this.speechOrdinal);
-          });
+          // 重进同一篇且该篇正在全局播放（播放中/暂停）：接管控制权并同步状态
+          if (this.global.bindIfCurrent(this.noteId, this.uiSink)) {
+            this.playState = this.global.playbackState;
+          } else if (this.autoplay && this.ttsAvailable) {
+            // 连读换篇（Feature 9）：跳进来即自动起播
+            this.startReading();
+          }
+        } else if (this.autoplay) {
+          // 连读链上遇到空正文/纯图片笔记（无朗读计划）：推进到下一篇，不能卡死在本篇
+          void this.global.advanceFrom(this.noteId);
         }
         const blocksJson: string = JSON.stringify(blocks);
         this.controller.runJavaScript(
@@ -409,17 +446,23 @@ struct NoteRead {
   }
 
   /**
-   * 单篇可读导出（S4-2）：Markdown + 附件打 ZIP，经系统分享面板交接。
-   * 与备份无关（导出 ≠ 备份，V1.4 F06）；附件缺失不阻断，如实提示保留原链接。
+   * 单篇纯文本分享（第二批 Feature 8）：markdown 原文经系统分享面板直接交接，
+   * attachment:// 链接重写为 [图片] 占位（对方收不到本应用沙箱附件）。
+   * 不落盘、不记导出记录——纯文本交接不是「导出产物」（导出 ≠ 备份，分享 ≠ 导出）。
+   * 多选 ZIP 导出与设置页全量导出入口不受影响。
    */
-  private async exportThis(): Promise<void> {
+  private async shareThis(): Promise<void> {
+    const ctx = AppContextHolder.get();
+    if (ctx === undefined) {
+      this.notice = '分享不可用：应用上下文未就绪。';
+      return;
+    }
     try {
-      const result = await this.svc.exportAndShare([this.noteId], 'single');
-      this.notice = result.unresolved.length > 0
-        ? `已导出。${result.unresolved.length} 个附件未能带上（正文中链接保留原样）。`
-        : '已导出，正在拉起系统分享面板…';
+      const rewritten = rewriteAttachmentLinks(this.markdown, (): string => '[图片]');
+      await new SystemShareHandoff(ctx).shareText(this.title, rewritten.markdown);
+      this.notice = '已拉起系统分享面板…';
     } catch (err) {
-      this.notice = `导出失败：${String(err)}`;
+      this.notice = `分享失败：${String(err)}`;
     }
   }
 
@@ -463,11 +506,11 @@ struct NoteRead {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
-        Text('导出')
+        Text('分享')
           .fontSize(15)
           .fontColor('#1F6FEB')
           .onClick(() => {
-            this.exportThis();
+            this.shareThis();
           })
         Text('编辑')
           .fontSize(15)
@@ -499,7 +542,7 @@ struct NoteRead {
                   if (!this.ttsAvailable) {
                     return;
                   }
-                  void this.playback?.pause();
+                  void this.global.pause();
                 })
               Text('停止')
                 .fontSize(15)
@@ -508,7 +551,7 @@ struct NoteRead {
                   if (!this.ttsAvailable) {
                     return;
                   }
-                  void this.playback?.stop();
+                  void this.global.stopAll();
                 })
               Text('上一段')
                 .fontSize(15)
@@ -517,7 +560,7 @@ struct NoteRead {
                   if (!this.ttsAvailable) {
                     return;
                   }
-                  void this.playback?.prev();
+                  void this.global.prevSegment();
                 })
               Text('下一段')
                 .fontSize(15)
@@ -526,7 +569,7 @@ struct NoteRead {
                   if (!this.ttsAvailable) {
                     return;
                   }
-                  void this.playback?.next();
+                  void this.global.nextSegment();
                 })
             } else if (this.playState === 'paused') {
               Text('继续')
@@ -537,7 +580,7 @@ struct NoteRead {
                     return;
                   }
                   this.speechNotice = '';
-                  void this.playback?.play();
+                  void this.global.play();
                 })
               Text('停止')
                 .fontSize(15)
@@ -546,7 +589,7 @@ struct NoteRead {
                   if (!this.ttsAvailable) {
                     return;
                   }
-                  void this.playback?.stop();
+                  void this.global.stopAll();
                 })
             } else {
               Text('朗读')
@@ -556,8 +599,7 @@ struct NoteRead {
                   if (!this.ttsAvailable) {
                     return; // 探测失败不允许触发（F-5 置灰口径），杜绝 failed 态反复重试
                   }
-                  this.speechNotice = '';
-                  void this.ensurePlayback().play();
+                  this.startReading();
                 })
             }
           }
@@ -670,6 +712,10 @@ struct NoteRead {
           .fontColor('#8C8C8C')
           .width('100%')
       }
+
+      // 全局朗读浮标（Feature 5）：本页发起的朗读退页后由它继续控制；
+      // 其他篇正在朗读时进本页也可见，点击标题回该篇
+      PlayingBar()
     }
     .width('100%')
     .height('100%')

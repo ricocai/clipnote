@@ -2,6 +2,7 @@ import { bundleManager } from '@kit.AbilityKit';
 import {
   AppContextHolder,
   AppDataRuntime,
+  AppSettingsStore,
   BackupService,
   BlobCas,
   ClipIngestService,
@@ -26,6 +27,7 @@ import {
 } from 'speech';
 import { McpService } from './McpService';
 import { BackupEntry } from './BackupEntry';
+import { GlobalPlayback } from './GlobalPlayback';
 
 /**
  * 依赖装配（最薄的一层；S3-1 从 Index 页抽出为独立模块，供收件箱页 / 笔记列表页 / 编辑页共用）。
@@ -57,6 +59,8 @@ export class AppServices {
   private appVersion: string | undefined = undefined;
   private backupEntryInst: BackupEntry | undefined = undefined;
   private engineInst: SystemTtsEngine | undefined = undefined;
+  private globalPlaybackInst: GlobalPlayback | undefined = undefined;
+  private settingsStoreInst: AppSettingsStore | undefined = undefined;
 
   private constructor() {
     const root: string = AppContextHolder.filesDir();
@@ -160,6 +164,29 @@ export class AppServices {
       );
     }
     return this.engineInst;
+  }
+
+  /**
+   * 全局朗读播放（第二批 Feature 5+9）：控制器生命周期与进程同寿命，
+   * 阅读页只租借 UI 回调；AVSession 播控与长时任务随播放惰性启停。
+   */
+  globalPlayback(): GlobalPlayback {
+    if (this.globalPlaybackInst === undefined) {
+      this.globalPlaybackInst = new GlobalPlayback(this);
+    }
+    return this.globalPlaybackInst;
+  }
+
+  /** 功能开关持久化（Feature 6/9）：preferences 存储，内存缓存 */
+  settingsStore(): AppSettingsStore {
+    if (this.settingsStoreInst === undefined) {
+      const ctx = AppContextHolder.get();
+      if (ctx === undefined) {
+        throw new Error('AppContext 未初始化——EntryAbility 必须先 AppContextHolder.set()');
+      }
+      this.settingsStoreInst = new AppSettingsStore(ctx);
+    }
+    return this.settingsStoreInst;
   }
 
   /**

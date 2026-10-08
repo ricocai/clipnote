@@ -38,4 +38,24 @@ export class SystemShareHandoff implements ShareHandoff {
     });
     return true;
   }
+
+  /**
+   * 纯文本分享（第二批 Feature 8）：单篇笔记 markdown 原文直接经系统分享面板交接，
+   * 不落盘、不记导出记录——纯文本交接不是「导出产物」（设计口径：导出 ≠ 备份，
+   * 分享 ≠ 导出）。attachment:// 链接由调用方先重写为 [图片] 占位再传入。
+   */
+  async shareText(title: string, text: string): Promise<boolean> {
+    const data: systemShare.SharedData = new systemShare.SharedData({
+      utd: utd.UniformDataType.PLAIN_TEXT,
+      content: text,
+      title,
+      description: 'ClipNote 拾记 · 笔记分享',
+    });
+    const controller: systemShare.ShareController = new systemShare.ShareController(data);
+    await controller.show(this.context, {
+      previewMode: systemShare.SharePreviewMode.DETAIL,
+      selectionMode: systemShare.SelectionMode.SINGLE,
+    });
+    return true;
+  }
 }

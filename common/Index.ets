@@ -55,3 +55,11 @@ export { AppDataRuntime } from './src/main/ets/adapters/app-database';
 export { SystemPasteboardProbe } from './src/main/ets/adapters/pasteboard-probe';
 export { SystemShareHandoff } from './src/main/ets/adapters/system-share';
 export { DevicePermissionStatus } from './src/main/ets/adapters/device-permissions';
+export {
+  AppSettingsStore,
+  DEFAULT_APP_FEATURE_SETTINGS,
+} from './src/main/ets/adapters/app-settings-store';
+export type {
+  AppFeatureSettings,
+  AppFeatureSettingsPatch,
+} from './src/main/ets/adapters/app-settings-store';

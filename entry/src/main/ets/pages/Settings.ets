@@ -1,6 +1,7 @@
 import { router } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
+  AppFeatureSettingsPatch,
   DevicePermissionStatus,
   ExportRecord,
   NotebookService,
@@ -60,6 +61,10 @@ struct Settings {
   @State newNotebookName: string = '';
   @State renamingNotebookId: string = '';
   @State renameNotebookText: string = '';
+  /** 功能开关（第二批 Feature 6/9） */
+  @State clipboardAutoInbox: boolean = true;
+  @State inboxBatchSaveToDefault: boolean = true;
+  @State sequentialPlayback: boolean = false;
 
   private readonly perm: DevicePermissionStatus = new DevicePermissionStatus();
   private readonly svc: AppServices = AppServices.get();
@@ -73,6 +78,30 @@ struct Settings {
     this.refreshMcp().catch((err: Error) => {
       this.notice = `MCP 状态读取失败：${String(err)}`;
     });
+    this.svc.settingsStore().load().then((settings): void => {
+      this.clipboardAutoInbox = settings.clipboardAutoInbox;
+      this.inboxBatchSaveToDefault = settings.inboxBatchSaveToDefault;
+      this.sequentialPlayback = settings.sequentialPlayback;
+      // 全局播放的连读开关同步（避免每次连读查询 preferences）
+      this.svc.globalPlayback().refreshSettings(settings.sequentialPlayback);
+    }).catch((): void => undefined);
+  }
+
+  // -------------------------------------------------------------------------
+  // 功能开关（第二批 Feature 6/9）
+  // -------------------------------------------------------------------------
+
+  /** 开关落盘；连读开关同步给全局播放（下一次读完生效） */
+  private async toggleFeature(patch: AppFeatureSettingsPatch): Promise<void> {
+    try {
+      const merged = await this.svc.settingsStore().patch(patch);
+      this.clipboardAutoInbox = merged.clipboardAutoInbox;
+      this.inboxBatchSaveToDefault = merged.inboxBatchSaveToDefault;
+      this.sequentialPlayback = merged.sequentialPlayback;
+      this.svc.globalPlayback().refreshSettings(merged.sequentialPlayback);
+    } catch (err) {
+      this.notice = `设置保存失败：${String(err)}`;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -473,6 +502,67 @@ struct Settings {
           .width('100%')
       }
       .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      Divider()
+
+      // 功能开关（第二批 Feature 6/9）：剪贴板直写 / 批量转存 / 顺序连读
+      Text('功能开关')
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .width('100%')
+      Row({ space: 10 }) {
+        Toggle({ type: ToggleType.Switch, isOn: this.clipboardAutoInbox })
+          .onChange((on: boolean) => {
+            void this.toggleFeature({ clipboardAutoInbox: on });
+          })
+        Column({ space: 2 }) {
+          Text('回前台自动保存剪贴板')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+          Text('开启后回到前台时自动读取剪贴板并写入收件箱（同一内容只写一次）。'
+            + '系统剪贴板策略默认「使用前每次询问」，可能弹授权框；'
+            + '在 设置 → 隐私和安全 → 剪贴板 改为「始终允许」后不再打扰。')
+            .fontSize(11)
+            .fontColor('#8C8C8C')
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+      }
+      .width('100%')
+      Row({ space: 10 }) {
+        Toggle({ type: ToggleType.Switch, isOn: this.inboxBatchSaveToDefault })
+          .onChange((on: boolean) => {
+            void this.toggleFeature({ inboxBatchSaveToDefault: on });
+          })
+        Column({ space: 2 }) {
+          Text('收件箱批量存为笔记')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+          Text('允许在收件箱多选后一键存为笔记（多个笔记本时选择目标）。关闭后收件箱隐藏批量保存入口，单条保存不受影响。')
+            .fontSize(11)
+            .fontColor('#8C8C8C')
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+      }
+      .width('100%')
+      Row({ space: 10 }) {
+        Toggle({ type: ToggleType.Switch, isOn: this.sequentialPlayback })
+          .onChange((on: boolean) => {
+            void this.toggleFeature({ sequentialPlayback: on });
+          })
+        Column({ space: 2 }) {
+          Text('按笔记顺序依次朗读')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+          Text('当前笔记读完后，自动按笔记库顺序（置顶优先）接下一篇继续朗读，直到读完全部或手动停止。锁屏后可持续播放。')
+            .fontSize(11)
+            .fontColor('#8C8C8C')
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+      }
       .width('100%')
 
       Divider()

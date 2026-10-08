@@ -22,6 +22,10 @@
 *.dll
 sign/
 **/signing/
+# 根 build-profile.json5 由 DevEco 签名流程回填真实凭据（keyPassword/storePassword
+# 及本机绝对路径），严禁入库；协作者从 build-profile.template.json5 复制后自行签名。
+# 模块级 build-profile.json5（entry/common/mcp/speech）不含签名，照常入库。
+/build-profile.json5
 local.properties
 *.local
 # tools 本机验证基线产物与依赖

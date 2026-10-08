@@ -23,6 +23,7 @@ import {
 import { EVENT_FOREGROUND } from '../EntryEvents';
 import { AppServices } from '../services/AppServices';
 import { ShareNoticeBus } from '../share/share-intake';
+import { PlayingBar } from '../ui/PlayingBar';
 import { flatPreview, relativeTimeLabel } from '../ui/Format';
 
 // ---------------------------------------------------------------------------
@@ -146,6 +147,10 @@ struct Index {
   @State inboxSelectedIds: string[] = [];
   /** 笔记本列表（批量转存的目标选择器；仅一个笔记本时直存默认，不弹选择） */
   @State notebooks: Notebook[] = [];
+  /** 剪贴板直写开关（Feature 6）：开 = 回前台有新内容直接写收件箱；关 = 现状提示条 */
+  @State autoInbox: boolean = true;
+  /** 批量转存开关（Feature 6 第二开关）：关 = 收件箱隐藏批量「存为笔记」入口 */
+  @State inboxBatchEnabled: boolean = true;
 
   private readonly svc: AppServices = AppServices.get();
   private inboxSvc: InboxService | undefined = undefined;
@@ -164,6 +169,7 @@ struct Index {
   aboutToAppear(): void {
     this.subscribeForeground();
     this.initData();
+    this.refreshSettings();
     this.checkForeground();
     // 分享结果接收（S2-3）：订阅即时投递 + drain 冷启动窗口期的积压
     ShareNoticeBus.subscribe(this.shareListener);
@@ -172,12 +178,15 @@ struct Index {
 
   onPageShow(): void {
     // 从其他页面返回时复查。检测只是"读布尔"，且同一内容集内不重复弹（状态机保证），不会打扰
+    this.refreshSettings();
     this.checkForeground();
     // 分享拉起已运行实例时本页可能已在显示（不走 aboutToAppear），这里兜底取积压
     this.drainShareNotices();
     // 笔记本默认项可能在设置页变更（批量转存选择器与单条转存都要反映最新默认）
     this.refreshNotebooks();
     this.refreshInbox();
+    // 补偿广播：隐藏期间浮标组件的 @State 更新不触发 build，回前台重放一次
+    this.svc.globalPlayback().replay();
   }
 
   aboutToDisappear(): void {
@@ -214,9 +223,23 @@ struct Index {
     }
   }
 
+  /** 功能开关刷新（Feature 6）：设置页可能已变更，回页/进页时同步本地缓存 */
+  private async refreshSettings(): Promise<void> {
+    try {
+      const settings = await this.svc.settingsStore().load();
+      this.autoInbox = settings.clipboardAutoInbox;
+      this.inboxBatchEnabled = settings.inboxBatchSaveToDefault;
+    } catch {
+      // 读取失败保持现值，行为退化为「上一状态」
+    }
+  }
+
   /**
-   * 回前台检查（S2-4 口径核心）：只探测"有没有内容"，**不读取、不落盘任何内容**。
-   * 是否读取由用户点击提示条决定（用户手势）；"是否重复弹"由内核状态机回答。
+   * 回前台检查（S2-4 + 第二批 Feature 6 直写口径）：
+   *  - 开关开：检测到新内容集 → 直接读取并写入收件箱（readBoardAndCapture
+   *    内的 fgPrompt.accept 保证同一内容集只写一次——沿用状态机去重口径）；
+   *    系统可能弹剪贴板授权框（"使用前每次询问"策略），如实接受，设置页有引导文案；
+   *  - 开关关：只探测"有没有内容"，不读取，展示提示条交用户决定（S2-4 现状）。
    */
   private async checkForeground(): Promise<void> {
     if (this.fgChecking) {
@@ -225,7 +248,16 @@ struct Index {
     this.fgChecking = true;
     try {
       const res: ForegroundCheck = await this.fgPrompt.checkOnForeground(this.probe);
-      this.promptOpen = res !== ForegroundCheck.NONE;
+      if (res !== ForegroundCheck.NONE) {
+        if (this.autoInbox && this.dataReady) {
+          this.promptOpen = false;
+          await this.readBoardAndCapture(ClipEntry.RETURN_TO_FOREGROUND);
+        } else {
+          this.promptOpen = true;
+        }
+      } else {
+        this.promptOpen = false;
+      }
     } finally {
       this.fgChecking = false;
     }
@@ -642,8 +674,10 @@ struct Index {
         .border({ width: 1, color: '#B7D3F7' })
       }
 
-      // 能力边界必须如实展示（设计 §4.1）：这里的措辞不是免责声明，而是产品事实
-      Text('本应用不会在后台或息屏时持续监听剪贴板，也不补采回前台之前的历史复制。保存请在需要时主动操作。')
+      // 能力边界必须如实展示（设计 §4.1 + Feature 6 开关态）：措辞不是免责声明，而是产品事实
+      Text(this.autoInbox
+        ? '剪贴板直写已开启：回到前台时自动读取剪贴板并写入收件箱（同一内容只写一次；系统可能弹剪贴板授权框，可在系统设置改为「始终允许」）。本应用不在后台或息屏时监听剪贴板，也不补采历史复制。'
+        : '本应用不会在后台或息屏时持续监听剪贴板，也不补采回前台之前的历史复制。保存请在需要时主动操作（可在设置页开启「回前台自动保存剪贴板」）。')
         .fontSize(12)
         .fontColor('#8C8C8C')
         .width('100%')
@@ -787,6 +821,7 @@ struct Index {
             .fontSize(14)
             .height(36)
             .enabled(this.inboxSelectedIds.length > 0)
+            .visibility(this.inboxBatchEnabled ? Visibility.Visible : Visibility.None)
             .onClick(() => {
               this.startBatchAccept();
             })
@@ -884,6 +919,9 @@ struct Index {
         .layoutWeight(1)
         .width('100%')
       }
+
+      // 全局朗读浮标（Feature 5）：正在朗读的篇跨页可见，点击标题回阅读页
+      PlayingBar()
     }
     .width('100%')
     .height('100%')
