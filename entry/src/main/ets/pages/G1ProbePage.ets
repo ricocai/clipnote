@@ -1,7 +1,20 @@
 import { router } from '@kit.ArkUI';
-import { PasteButtonOnClickResult } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { G1ProbeEntry, G1ProbeLog } from '../probe/G1ProbeLog';
 import { SCENE, probeClipboardRead, probePasteButtonRead, recordDeviceInfo } from '../probe/G1ProbeScenes';
+
+// ---- 临时探针（Q1 排障用，验收后随 G1 设施一并移除）----
+// 1x1 透明 PNG，验证 WebResourceResponse 构造（与 NoteRead.attachmentResponse 同写法）
+const PROBE_PNG: number[] = [
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+  0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+  0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+  0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xfc, 0xcf, 0xc0, 0x50,
+  0x0f, 0x00, 0x04, 0x85, 0x01, 0x80, 0x84, 0xa9, 0x8c, 0x21, 0x00, 0x00,
+  0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+];
+const PROBE_HTML: string = 'data:text/html,<html><body><img src="attachment://probe" ' +
+  'onload="document.title=\'LOADED\'" onerror="document.title=\'ERROR\'"></body></html>';
 
 /**
  * G1 临时探测页（WHY-90，临时设施，G1 验收后随探针模块一并移除）。
@@ -18,6 +31,9 @@ import { SCENE, probeClipboardRead, probePasteButtonRead, recordDeviceInfo } fro
 struct G1ProbePage {
   @State entries: G1ProbeEntry[] = [];
   @State logPath: string = '';
+  /** Q1 临时探针：是否挂载 Web 验证组件 */
+  @State webProbeOn: boolean = false;
+  private webCtl: webview.WebviewController = new webview.WebviewController();
 
   aboutToAppear(): void {
     recordDeviceInfo();
@@ -27,6 +43,18 @@ struct G1ProbePage {
   private refresh(): void {
     this.entries = G1ProbeLog.entries().slice().reverse();
     this.logPath = G1ProbeLog.path();
+  }
+
+  /** Q1 探针：用与 NoteRead.attachmentResponse 完全相同的构造回 1x1 PNG，img.onload/onerror 写 title */
+  private probeWebResponse(): void {
+    this.webProbeOn = true;
+    setTimeout(() => {
+      this.webCtl.runJavaScript('document.title', (err: Error, result: string) => {
+        const ok: boolean = result === '"LOADED"' || result === 'LOADED';
+        G1ProbeLog.record('q1-web-response', ok, `img title=${String(result)} err=${String(err)}`);
+        this.refresh();
+      });
+    }, 2000);
   }
 
   build() {
@@ -71,6 +99,33 @@ struct G1ProbePage {
         .fontSize(11)
         .fontColor('#8C8C8C')
         .width('100%')
+
+      Button('场景C（Q1 临时）：WebResourceResponse 图片响应构造')
+        .width('100%')
+        .onClick(() => {
+          this.probeWebResponse();
+        })
+
+      if (this.webProbeOn) {
+        Web({ src: PROBE_HTML, controller: this.webCtl })
+          .width('100%')
+          .height(60)
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
+            const url: string = event.request.getRequestUrl();
+            if (url.startsWith('attachment://')) {
+              // 对照实验（临时）：blockedResponse 构造（404 + 空体），img.onerror 应触发
+              const res: WebResourceResponse = new WebResourceResponse();
+              res.setResponseMimeType('text/plain');
+              res.setResponseEncoding('utf-8');
+              res.setResponseCode(404);
+              res.setReasonMessage('Not Found');
+              res.setResponseHeader([]);
+              res.setResponseData(new ArrayBuffer(0));
+              return res;
+            }
+            return undefined;
+          })
+      }
 
       List({ space: 6 }) {
         ForEach(this.entries, (entry: G1ProbeEntry) => {

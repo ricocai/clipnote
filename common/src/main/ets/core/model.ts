@@ -24,6 +24,14 @@ export const DEFAULT_INBOX_TTL_MS: number = 7 * 24 * 60 * 60 * 1000;
 /** 幂等合并时间窗（毫秒）：同一次用户操作可能同时触发分享 / 前台读取 / 变化回调 */
 export const DEDUPE_WINDOW_MS: number = 3000;
 
+/**
+ * 持久化去重时间窗（毫秒，真机验收 Q4 口径）：只对**最近 2 日内**落盘的
+ * 收件箱条目 / 笔记（origin_hash）做同内容去重；窗口外同内容视为新内容正常入库。
+ * 与 DEDUPE_WINDOW_MS 的分工：3 秒窗吸收同一操作的并发重复事件（内存），
+ * 本窗口吸收跨会话/跨天的重复采集（数据库）。
+ */
+export const PERSISTED_DEDUPE_WINDOW_MS: number = 2 * 24 * 60 * 60 * 1000;
+
 export type NoteId = string;
 export type BlobSha256 = string;
 

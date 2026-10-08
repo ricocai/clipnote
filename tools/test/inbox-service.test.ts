@@ -197,6 +197,104 @@ test('InboxService: 空内容与幂等合并如实上报', async () => {
   assert.equal(await f.svc.pendingCount(), 1);
 });
 
+// ---------------------------------------------------------------------------
+// 真机验收 Q4：持久化去重只对最近 2 日内的条目/笔记生效
+// ---------------------------------------------------------------------------
+
+/** 在同一库上重建服务（模拟重启：内存幂等表丢弃，持久化数据保留） */
+async function rebuildService(f: Fixture): Promise<InboxService> {
+  const ingest = new ClipIngestService({
+    clock: f.clock,
+    hasher: new NodeHasher(),
+    random: new SequentialRandom(),
+    logger: f.logger,
+  });
+  return new InboxService({ ingest, inbox: f.inbox, notes: f.notes, clock: f.clock, logger: f.logger });
+}
+
+test('Q4: 越过 3 秒内存窗后，近 2 日内同内容仍合并（持久化去重），不产生新条目', async () => {
+  const f = await makeFixture();
+  const first = await f.svc.capture({ text: '节后第一天晨读', entry: ClipEntry.MANUAL });
+  assert.equal(first.kind, CaptureKind.PERSISTED);
+
+  // 越过 3 秒内存窗：合并依据只能来自持久化去重
+  f.clock.advance(4000);
+  const again = await f.svc.capture({ text: '节后第一天晨读', entry: ClipEntry.MANUAL });
+  assert.equal(again.kind, CaptureKind.MERGED);
+  assert.ok(again.reasons.includes('dedupe:persisted_within_2d'));
+  assert.equal(again.item.id, first.item.id); // 合并到既有条目
+  assert.equal(await f.svc.pendingCount(), 1);
+
+  // 模拟重启（内存幂等表清空）：次日再复制同内容，依然合并
+  f.clock.advance(24 * 60 * 60 * 1000);
+  const svc2 = await rebuildService(f);
+  const day2 = await svc2.capture({ text: '节后第一天晨读', entry: ClipEntry.FOREGROUND_WATCH });
+  assert.equal(day2.kind, CaptureKind.MERGED);
+  assert.ok(day2.reasons.includes('dedupe:persisted_within_2d'));
+  assert.equal(await svc2.pendingCount(), 1);
+});
+
+test('Q4: 超过 2 日窗口的同内容视为新内容，正常入库', async () => {
+  const f = await makeFixture();
+  const first = await f.svc.capture({ text: '三日前复制过的内容', entry: ClipEntry.MANUAL });
+  assert.equal(first.kind, CaptureKind.PERSISTED);
+
+  f.clock.advance(3 * 24 * 60 * 60 * 1000); // 3 天，超出 2 日去重窗
+  const svc2 = await rebuildService(f);
+  const again = await svc2.capture({ text: '三日前复制过的内容', entry: ClipEntry.MANUAL });
+  assert.equal(again.kind, CaptureKind.PERSISTED);
+  assert.notEqual(again.item.id, first.item.id);
+  assert.equal(await svc2.pendingCount(), 2);
+});
+
+test('Q4: 已存为笔记的内容（收件箱条目已清理）再采集 → 命中笔记侧去重，不再进收件箱', async () => {
+  const f = await makeFixture();
+  const r = await f.svc.capture({ text: '已转存为笔记的内容', entry: ClipEntry.SHARE });
+  assert.equal(r.kind, CaptureKind.PERSISTED);
+  await f.svc.acceptAsNote(r.item.id);
+  // 收件箱条目被用户物理清理（笔记仍在）——去重只能命中笔记侧 origin_hash
+  await f.svc.remove(r.item.id);
+
+  f.clock.advance(4000);
+  const svc2 = await rebuildService(f);
+  const again = await svc2.capture({ text: '已转存为笔记的内容', entry: ClipEntry.MANUAL });
+  assert.equal(again.kind, CaptureKind.MERGED);
+  assert.ok(again.reasons.includes('dedupe:note_within_2d'));
+  assert.equal(await svc2.pendingCount(), 0); // 未产生新条目
+});
+
+test('Q4: 笔记已移入回收站（软删）则不参与去重，同内容重新入库', async () => {
+  const f = await makeFixture();
+  const r = await f.svc.capture({ text: '删掉后又会复制的内容', entry: ClipEntry.MANUAL });
+  const note = await f.svc.acceptAsNote(r.item.id);
+  await f.svc.remove(r.item.id);
+  await f.notes.softDelete(note.id); // 用户把笔记移入回收站
+
+  f.clock.advance(4000);
+  const svc2 = await rebuildService(f);
+  const again = await svc2.capture({ text: '删掉后又会复制的内容', entry: ClipEntry.MANUAL });
+  assert.equal(again.kind, CaptureKind.PERSISTED);
+  assert.equal(await svc2.pendingCount(), 1);
+});
+
+test('Q4: 图片摄取同样适用 2 日持久化去重', async () => {
+  const f = await makeFixture();
+  const sha: string = 'a'.repeat(64);
+  const first = await f.svc.captureImage({
+    sha256: sha, sizeBytes: 100, mime: 'image/png', entry: ClipEntry.SHARE,
+  });
+  assert.equal(first.kind, CaptureKind.PERSISTED);
+
+  f.clock.advance(4000);
+  const svc2 = await rebuildService(f);
+  const again = await svc2.captureImage({
+    sha256: sha, sizeBytes: 100, mime: 'image/png', entry: ClipEntry.SHARE,
+  });
+  assert.equal(again.kind, CaptureKind.MERGED);
+  assert.ok(again.reasons.includes('dedupe:persisted_within_2d'));
+  assert.equal(await svc2.pendingCount(), 1);
+});
+
 test('标题派生与入口来源映射', () => {
   assert.equal(deriveTitle('  \n  首个非空行  \n次行'), '首个非空行');
   assert.equal(deriveTitle('x'.repeat(60)).length, 51); // 50 字 + 省略号

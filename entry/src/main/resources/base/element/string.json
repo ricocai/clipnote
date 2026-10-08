@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "拾记"
+    },
+    {
+      "name": "reason_read_pasteboard",
+      "value": "用于读取剪贴板内容，快速创建笔记"
     }
   ]
 }

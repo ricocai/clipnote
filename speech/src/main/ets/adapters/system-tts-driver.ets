@@ -1,18 +1,18 @@
-import { textToSpeech } from '@kit.SpeechKit';
+import { textToSpeech } from '@kit.CoreSpeechKit';
 import { CreateEngineParams, DriverUtterance, TtsDriverListener, TtsEngineDriver } from '../core/driver';
 
 /**
  * 系统离线 TTS 驱动适配（S5-1，G4 探测结论落地）。
  *
+ * 已按 SDK 实际声明（@kit.CoreSpeechKit → @hms.ai.textToSpeech）核对修正：
  *  - `online: 1` 固定：系统引擎离线-only，0（在线）创建必失败（探测 E1）；
  *  - zh-CN、person=0（聆小珊）为官方口径，多音色枚举属 TTS-2 真机项（探测 E2/E6）；
- *  - playType=1：引擎直接播报，无 PCM 流出——进度上报粒度见 core/engine.ts 注释；
- *  - 旧引擎（API 12~22）API 面 speak/stop/isBusy/shutdown + 回调集，无原生
- *    pause/resume（pause/resume 由内核方案 A 在引擎层实现，探测"接口对齐"节）。
- *
- * ⚠️ 真机核对项（G4 §5，联调时逐项确认）：setListener 回调签名、stop 是否
- * 携带 callback、speak 的 extraParams 透传格式。探测时官方 API 参考页 JS
- * 渲染未抓全，以上按 Codelabs（E1）+ 社区交叉（E3）的最小共识书写。
+ *  - 引擎直接播报，无 PCM 流出——进度上报粒度见 core/engine.ts 注释；
+ *  - speed/volume/pitch 不在 CreateEngineParams 字段内，经 extraParams 透传
+ *    （SDK 文档未列这些键，真机若被忽略属平台行为，内核仍记录用户设置）；
+ *  - requestId 口径：内核签发 number，SDK 要求 string，适配层 String()/Number() 双向映射；
+ *  - stop() 无 requestId 参数（SDK 语义为停当前播报），shutdown() 无回调，
+ *    两者同步返回即视为完成；onStop 映射为 onComplete（取消语义，见 core/engine.ts）。
  */
 export class SystemTtsDriver implements TtsEngineDriver {
   private engine: textToSpeech.TextToSpeechEngine | undefined;
@@ -24,13 +24,15 @@ export class SystemTtsDriver implements TtsEngineDriver {
 
   create(params: CreateEngineParams): Promise<void> {
     return new Promise<void>((resolve: () => void, reject: (err: Error) => void): void => {
+      const extraParams: Record<string, Object> = {};
+      extraParams['speed'] = params.speed;
+      extraParams['volume'] = params.volume;
+      extraParams['pitch'] = params.pitch;
       const ttsParams: textToSpeech.CreateEngineParams = {
         language: params.language,
         person: params.person,
         online: 1,
-        speed: params.speed,
-        volume: params.volume,
-        pitch: params.pitch,
+        extraParams: extraParams,
       };
       textToSpeech.createEngine(
         ttsParams,
@@ -40,17 +42,22 @@ export class SystemTtsDriver implements TtsEngineDriver {
             return;
           }
           this.engine = engine;
-          engine.setListener({
-            onStart: (requestId: number): void => {
-              this.listener?.onStart(requestId);
+          const speakListener: textToSpeech.SpeakListener = {
+            onStart: (requestId: string, response: textToSpeech.StartResponse): void => {
+              this.listener?.onStart(Number(requestId));
             },
-            onComplete: (requestId: number): void => {
-              this.listener?.onComplete(requestId);
+            onComplete: (requestId: string, response: textToSpeech.CompleteResponse): void => {
+              this.listener?.onComplete(Number(requestId));
             },
-            onError: (requestId: number, errorCode: number, errorMessage: string): void => {
-              this.listener?.onError(requestId, errorCode, errorMessage);
+            onStop: (requestId: string, response: textToSpeech.StopResponse): void => {
+              // stop() 触发的结束按「正常取消」上报，内核据此 resolve 当前段（非错误）
+              this.listener?.onComplete(Number(requestId));
             },
-          });
+            onError: (requestId: string, errorCode: number, errorMessage: string): void => {
+              this.listener?.onError(Number(requestId), errorCode, errorMessage);
+            },
+          };
+          engine.setListener(speakListener);
           resolve();
         },
       );
@@ -59,25 +66,21 @@ export class SystemTtsDriver implements TtsEngineDriver {
 
   async speak(utterance: DriverUtterance): Promise<void> {
     const engine: textToSpeech.TextToSpeechEngine = this.requireEngine();
-    const speakParams: Record<string, object | number | string> = {
-      requestId: utterance.requestId,
-      text: utterance.text,
-      extraParams: { playType: 1 },
+    // 引擎直接播报：playType=1 沿用原口径（extraParams 透传，SDK 未列此键，真机核对项）
+    const extraParams: Record<string, Object> = {};
+    extraParams['playType'] = 1;
+    const speakParams: textToSpeech.SpeakParams = {
+      requestId: String(utterance.requestId),
+      extraParams: extraParams,
     };
-    await new Promise<void>((resolve: () => void, reject: (err: Error) => void): void => {
-      engine.speak(speakParams as textToSpeech.SpeakParams, (err: Error): void => {
-        if (err !== undefined && err !== null) {
-          reject(new Error(`speak 调用失败：${err.message}`));
-          return;
-        }
-        resolve();
-      });
-    });
+    // speak 无回调：同步调用不抛错即视为「引擎已接受请求」，播完/出错经 listener 异步上报
+    engine.speak(utterance.text, speakParams);
   }
 
   async stop(requestId: number): Promise<void> {
     const engine: textToSpeech.TextToSpeechEngine = this.requireEngine();
-    engine.stop(requestId);
+    // SDK 的 stop() 无 requestId 参数：停当前播报，结果经 onStop 回调上报
+    engine.stop();
   }
 
   async shutdown(): Promise<void> {
@@ -86,11 +89,8 @@ export class SystemTtsDriver implements TtsEngineDriver {
     if (engine === undefined) {
       return;
     }
-    await new Promise<void>((resolve: () => void): void => {
-      engine.shutdown((): void => {
-        resolve();
-      });
-    });
+    // shutdown() 无回调：同步返回即视为已释放
+    engine.shutdown();
   }
 
   private requireEngine(): textToSpeech.TextToSpeechEngine {

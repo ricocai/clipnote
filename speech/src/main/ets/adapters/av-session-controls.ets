@@ -20,20 +20,9 @@
  */
 
 import { common } from '@kit.AbilityKit';
-import avSession from '@kit.AVSessionKit';
+import { avSession } from '@kit.AVSessionKit';
 import { audio } from '@kit.AudioKit';
-
-/** 播控指令的接收方（entry 侧映射到 SpeechPlaybackController） */
-export interface PlaybackCommandSink {
-  play(): void;
-  pause(): void;
-  next(): void;
-  prev(): void;
-  stop(): void;
-}
-
-/** 焦点中断上报（entry 侧映射到 controller.interrupt(reason)） */
-export type InterruptHandler = (reason: string) => void;
+import { InterruptHandler, PlaybackCommandSink } from '../core/controller';
 
 export class AvSessionControls {
   private session: avSession.AVSession | undefined = undefined;
@@ -55,8 +44,8 @@ export class AvSessionControls {
       // 播控指令（通知栏/锁屏/线控）
       session.on('play', () => this.sinkValue?.play());
       session.on('pause', () => this.sinkValue?.pause());
-      session.on('next', () => this.sinkValue?.next());
-      session.on('previous', () => this.sinkValue?.prev());
+      session.on('playNext', () => this.sinkValue?.next());
+      session.on('playPrevious', () => this.sinkValue?.prev());
       session.on('stop', () => this.sinkValue?.stop());
       // 音频焦点（真机核对项 4/5：activate 获取焦点；中断事件双路尝试）
       await session.activate();
@@ -70,7 +59,7 @@ export class AvSessionControls {
 
   /** 更新锁屏/通知栏元信息（当前篇名；assetId 每次换篇自增以触发刷新） */
   async updateMetadata(title: string, ordinal: number): Promise<void> {
-    const session = this.session;
+    const session: avSession.AVSession | undefined = this.session;
     if (session === undefined) {
       return;
     }
@@ -87,7 +76,7 @@ export class AvSessionControls {
 
   /** 解除注册并释放会话（退页/停止朗读时调用；幂等） */
   async stop(): Promise<void> {
-    const session = this.session;
+    const session: avSession.AVSession | undefined = this.session;
     this.session = undefined;
     this.sinkValue = undefined;
     if (session === undefined) {
@@ -96,11 +85,11 @@ export class AvSessionControls {
     try {
       session.off('play');
       session.off('pause');
-      session.off('next');
-      session.off('previous');
+      session.off('playNext');
+      session.off('playPrevious');
       session.off('stop');
       await session.deactivate();
-      await session.release();
+      await session.destroy();
     } catch {
       // 释放失败无补救必要（进程内对象随 Ability 销毁回收）
     }
@@ -116,7 +105,12 @@ export class AvSessionControls {
   private registerInterrupt(session: avSession.AVSession, onInterrupt: InterruptHandler): void {
     let registered = false;
     try {
-      audio.getAudioManager().on('audioInterrupt', () => {
+      // 路 A：AudioManager 会话级中断监听。SDK 未在 AudioManager 上声明该事件
+      //（audioInterrupt 挂在 AudioRenderer 上，本方案 playType=1 无自有 Renderer），
+      // 按「不同 API 版本命名有差异」口径动态挂接，失败静默转路 B
+      const audioRegistry: Record<string, (event: string, cb: () => void) => void> =
+        audio.getAudioManager() as object as Record<string, (event: string, cb: () => void) => void>;
+      audioRegistry.on('audioInterrupt', () => {
         onInterrupt('音频焦点被抢占（audioInterrupt）');
       });
       registered = true;
@@ -126,7 +120,9 @@ export class AvSessionControls {
     if (!registered) {
       try {
         // 不同版本事件名/载荷有差异，按「收到即中断」最小语义挂接
-        (session as object as Record<string, unknown>).on('audioInterrupt', () => {
+        const sessionAsRegistry: Record<string, (event: string, cb: () => void) => void> =
+          session as object as Record<string, (event: string, cb: () => void) => void>;
+        sessionAsRegistry.on('audioInterrupt', () => {
           onInterrupt('音频焦点被抢占（AVSession interrupt）');
         });
         registered = true;

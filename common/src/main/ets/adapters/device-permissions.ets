@@ -1,4 +1,4 @@
-import { abilityAccessCtrl, bundleManager, common, Want } from '@kit.AbilityKit';
+import { abilityAccessCtrl, bundleManager, common, Permissions, Want } from '@kit.AbilityKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { PasteboardPermissionState, PermissionStatusProbe, PermissionStatusReport } from '../core/ports';
 import { AppContextHolder } from './app-context';
@@ -25,10 +25,11 @@ export class DevicePermissionStatus implements PermissionStatusProbe {
       bundleName = info.name;
       const tokenID: number = info.appInfo.accessTokenId;
       const atManager: abilityAccessCtrl.AtManager = abilityAccessCtrl.createAtManager();
-      const ps: abilityAccessCtrl.PermissionState = atManager.checkAccessTokenSync(tokenID, PERM_READ_PASTEBOARD);
-      if (ps === abilityAccessCtrl.PermissionState.PERMISSION_GRANTED) {
+      const ps: abilityAccessCtrl.GrantStatus =
+        atManager.checkAccessTokenSync(tokenID, PERM_READ_PASTEBOARD as Permissions);
+      if (ps === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED) {
         state = PasteboardPermissionState.GRANTED;
-      } else if (ps === abilityAccessCtrl.PermissionState.PERMISSION_DENIED) {
+      } else if (ps === abilityAccessCtrl.GrantStatus.PERMISSION_DENIED) {
         state = PasteboardPermissionState.DENIED;
       }
     } catch (err) {

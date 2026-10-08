@@ -19,6 +19,12 @@ export interface TtsVoiceSettings {
   readonly speed: number;
 }
 
+/** 部分更新（patch）形态：字段缺省表示不改动该项 */
+export interface TtsVoiceSettingsPatch {
+  readonly person?: number;
+  readonly speed?: number;
+}
+
 export const DEFAULT_TTS_SETTINGS: TtsVoiceSettings = { person: 0, speed: 1 };
 
 /** 语速收敛到 [SPEED_MIN, SPEED_MAX]；非有限数回退默认 */
@@ -36,7 +42,7 @@ export function clampSpeed(speed: number): number {
 }
 
 /** 收敛任意来源的设置数据；person 要求非负整数，speed 走 clampSpeed */
-export function sanitizeTtsVoiceSettings(raw: { person?: unknown; speed?: unknown }): TtsVoiceSettings {
+export function sanitizeTtsVoiceSettings(raw: TtsVoiceSettingsPatch): TtsVoiceSettings {
   let person: number = DEFAULT_TTS_SETTINGS.person;
   if (typeof raw.person === 'number' && isFinite(raw.person) && raw.person >= 0 && Math.floor(raw.person) === raw.person) {
     person = raw.person;

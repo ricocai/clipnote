@@ -19,14 +19,16 @@
  * tools/probes/g3-interop.ts）。工具级授权语义与工具契约不随协议版本变化。
  */
 
+import { McpToolName, ToolAuthorization } from './src/main/ets/core/access-policy';
+
 export * from './src/main/ets/core/access-policy';
 
 /** MCP 协议适配（与传输解耦）。 */
 export interface IMcpAdapter {
   /** 已锁定的协议版本字符串；未锁定时必须返回 undefined，而不是猜一个默认值 */
   lockedProtocolVersion(): string | undefined;
-  discover(): Promise<unknown>;
-  callTool(name: McpToolName, args: Record<string, string>, auth: ToolAuthorization): Promise<unknown>;
+  discover(): Promise<Object>;
+  callTool(name: McpToolName, args: Record<string, string>, auth: ToolAuthorization): Promise<Object>;
 }
 
 /** 传输适配（Streamable HTTP / 自有隧道）。WSS 仅作为自有隧道内部协议。 */

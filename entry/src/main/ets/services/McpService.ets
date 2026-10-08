@@ -1,4 +1,4 @@
-import { connection } from '@kit.NetworkKit';
+import { wifiManager } from '@kit.ConnectivityKit';
 import {
   AppDataRuntime,
   AppContextHolder,
@@ -60,7 +60,11 @@ export class McpService {
   private enabled: boolean = false;
   private tickTimer: number | undefined = undefined;
 
-  constructor(private readonly deps: McpServiceDeps) {}
+  private readonly deps: McpServiceDeps;
+
+  constructor(deps: McpServiceDeps) {
+    this.deps = deps;
+  }
 
   // -------------------------------------------------------------------------
   // 开关与运行状态
@@ -133,7 +137,9 @@ export class McpService {
       this.core?.tick();
     } catch (err) {
       // 清扫失败不中断前台会话，但必须在日志留痕
-      this.deps.logger.log(LogLevel.ERROR, 'mcp.tick.failed', { message: String(err) });
+      const fields: Record<string, string | number | boolean> = {};
+      fields['message'] = String(err);
+      this.deps.logger.log(LogLevel.ERROR, 'mcp.tick.failed', fields);
     }
   }
 
@@ -256,16 +262,18 @@ export class McpService {
 async function localIpv4Addresses(logger: HilogLogger): Promise<string[]> {
   const out: string[] = [];
   try {
-    const netHandle = await connection.getDefaultNet();
-    const addresses = await netHandle.getAddresses();
-    for (let i: number = 0; i < addresses.length; i++) {
-      // family=1 为 IPv4（与 socket 适配器 FAMILY_IPV4 同口径）
-      if (addresses[i].family === 1 && addresses[i].address.length > 0) {
-        out.push(addresses[i].address);
-      }
+    // SDK 无 NetHandle 本机地址枚举接口；LAN 服务场景即 Wi-Fi，
+    // 取 wifiManager.getIpInfo() 的 STA 地址（小端序 number → 点分十进制）。
+    // 失败（无 Wi-Fi / 权限受限）收敛为空表并记警告——显式失败，不静默放开。
+    const info: wifiManager.IpInfo = wifiManager.getIpInfo();
+    const ip: number = info.ipAddress;
+    if (ip !== 0) {
+      out.push(`${ip & 0xFF}.${(ip >> 8) & 0xFF}.${(ip >> 16) & 0xFF}.${(ip >> 24) & 0xFF}`);
     }
   } catch (err) {
-    logger.log(LogLevel.WARN, 'mcp.local_addr.failed', { message: String(err) });
+    const fields: Record<string, string | number | boolean> = {};
+    fields['message'] = String(err);
+    logger.log(LogLevel.WARN, 'mcp.local_addr.failed', fields);
   }
   return out;
 }

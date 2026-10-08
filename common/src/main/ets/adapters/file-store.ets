@@ -58,7 +58,7 @@ export class SandboxFileStore implements IFileStore {
   async readBytes(path: string): Promise<Uint8Array> {
     const file: fs.File = fs.openSync(path, fs.OpenMode.READ_ONLY);
     try {
-      const stat: fs.Stat = fs.fstatSync(file.fd);
+      const stat: fs.Stat = fs.statSync(file.fd);
       const buffer: ArrayBuffer = new ArrayBuffer(stat.size);
       fs.readSync(file.fd, buffer);
       return new Uint8Array(buffer);

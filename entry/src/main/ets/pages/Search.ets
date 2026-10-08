@@ -37,7 +37,7 @@ interface SearchRow {
 
 @Entry
 @Component
-struct Search {
+struct SearchPage {
   @State query: string = '';
   @State rows: SearchRow[] = [];
   @State tags: Tag[] = [];

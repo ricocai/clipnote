@@ -16,10 +16,13 @@ export const DEFAULT_DB_NAME: string = 'clipnote.db';
  *    附件字节一律走 BlobCas 文件），读到即抛错，防止有人悄悄把二进制塞进来。
  */
 export class RelationalStoreExecutor implements IRdbExecutor {
-  private constructor(
-    private readonly store: relationalStore.RdbStore,
-    private readonly logger: ILogger,
-  ) {}
+  private readonly store: relationalStore.RdbStore;
+  private readonly logger: ILogger;
+
+  private constructor(store: relationalStore.RdbStore, logger: ILogger) {
+    this.store = store;
+    this.logger = logger;
+  }
 
   static async open(
     context: common.Context,

@@ -1,4 +1,5 @@
 import { router } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   DevicePermissionStatus,
   ExportRecord,
@@ -220,6 +221,7 @@ struct Settings {
       this.notice = on ? 'MCP 服务已开启（仅前台监听，退后台自动关闭）' : 'MCP 服务已关闭';
     } catch (err) {
       this.notice = `MCP 服务启动失败：${String(err)}`;
+      hilog.error(0xF1C0, 'ClipNote', 'mcp start failed: %{public}s', err instanceof Error ? (err.stack ?? err.message) : String(err));
       try {
         await svc.setEnabled(false);
       } catch {
@@ -446,8 +448,7 @@ struct Settings {
         .fontColor('#595959')
         .width('100%')
       Row({ space: 10 }) {
-        Switch()
-          .checked(this.mcpEnabled)
+        Toggle({ type: ToggleType.Switch, isOn: this.mcpEnabled })
           .onChange((on: boolean) => {
             this.toggleMcp(on);
           })

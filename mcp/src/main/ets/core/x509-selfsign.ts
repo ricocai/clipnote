@@ -11,15 +11,44 @@
  * 这些扩展对 mbedTLS 客户端握手与 Cherry Studio 指纹展示都不是必需。
  */
 
+/** 签名密钥算法种类：core 按种类组装 SPKI / 签名算法标识 / 签名值形态。 */
+export type X509KeyAlgorithm =
+  /** ECDSA P-256 + SHA-256（V0.1 原始口径；node 测试保留覆盖） */
+  | 'ec-p256'
+  /**
+   * RSA 2048 + SHA-256（真机决议：netstack TLS 服务端只装 RSA/DSA 私钥，
+   * EC 私钥 SSL_CTX_check_private_key 必失败——见 adapters 文件头实测记录）
+   */
+  | 'rsa-2048';
+
+/** RSA 公钥成分（大端无符号字节；derInteger 自行处理正数填充） */
+export interface RsaPublicKeyNumbers {
+  /** modulus n */
+  readonly modulus: Uint8Array;
+  /** public exponent e（通常 65537） */
+  readonly exponent: Uint8Array;
+}
+
 /** 签名端口：鸿蒙适配器（cryptoFramework）与本机测试（node:crypto）分别实现。 */
 export interface X509SignerPort {
-  /** EC P-256 公钥非压缩点：65 字节（0x04 || X || Y） */
-  publicKeyPointUncompressed(): Promise<Uint8Array>;
+  /** 算法种类；不实现（undefined）按 'ec-p256' 处理（V0.1 兼容口径） */
+  keyAlgorithm?(): X509KeyAlgorithm;
+  /** EC P-256 公钥非压缩点：65 字节（0x04 || X || Y）。keyAlgorithm()='ec-p256' 时必须实现 */
+  publicKeyPointUncompressed?(): Promise<Uint8Array>;
   /**
    * 对 TBSCertificate DER 做 ECDSA/SHA-256 签名。
    * 返回 IEEE P1363 raw 形态：r || s 各 32 字节共 64 字节（实现侧负责从平台格式转换）。
+   * keyAlgorithm()='ec-p256' 时必须实现。
    */
-  signEcdsaSha256(tbsDer: Uint8Array): Promise<Uint8Array>;
+  signEcdsaSha256?(tbsDer: Uint8Array): Promise<Uint8Array>;
+  /** RSA 公钥 (n, e)。keyAlgorithm()='rsa-2048' 时必须实现 */
+  rsaPublicKeyNumbers?(): Promise<RsaPublicKeyNumbers>;
+  /**
+   * 对 TBSCertificate DER 做 RSA PKCS#1 v1.5 + SHA-256 签名。
+   * 返回签名原始字节（长度 = 模长，RSA2048 即 256 字节），直接入 BIT STRING，
+   * 不需要 ECDSA 那样的 P1363/DER 形态转换。keyAlgorithm()='rsa-2048' 时必须实现。
+   */
+  signRsaSha256?(tbsDer: Uint8Array): Promise<Uint8Array>;
 }
 
 export interface SelfSignedCertParams {
@@ -217,8 +246,15 @@ export function ecdsaDerToRaw(der: Uint8Array, partLength: number): Uint8Array {
 const OID_EC_PUBLIC_KEY: Uint8Array = derOid('1.2.840.10045.2.1');
 const OID_PRIME256V1: Uint8Array = derOid('1.2.840.10045.3.1.7');
 const OID_ECDSA_SHA256: Uint8Array = derOid('1.2.840.10045.4.3.2');
+const OID_RSA_ENCRYPTION: Uint8Array = derOid('1.2.840.113549.1.1.1');
+const OID_SHA256_WITH_RSA: Uint8Array = derOid('1.2.840.113549.1.1.11');
 const OID_COMMON_NAME: Uint8Array = derOid('2.5.4.3');
 const OID_SUBJECT_ALT_NAME: Uint8Array = derOid('2.5.29.17');
+
+/** DER NULL（RSA 算法标识的参数位置，RFC 3279 §2.2.1：MUST 为 NULL） */
+function derNull(): Uint8Array {
+  return derTlv(0x05, new Uint8Array(0));
+}
 
 function subjectName(commonName: string): Uint8Array {
   // Name ::= SEQUENCE OF RelativeDistinguishedName（RDN 为 SET OF ATV）
@@ -232,6 +268,17 @@ function spkiEcP256(publicKeyPoint: Uint8Array): Uint8Array {
   return derSequence(
     derSequence(OID_EC_PUBLIC_KEY, OID_PRIME256V1),
     derBitString(publicKeyPoint),
+  );
+}
+
+/** RSA SPKI（RFC 5280 §4.1.2.7 + RFC 3279 §2.3.1）：RSAPublicKey ::= SEQUENCE(n, e) */
+function spkiRsa(numbers: RsaPublicKeyNumbers): Uint8Array {
+  if (numbers.modulus.length === 0 || numbers.exponent.length === 0) {
+    throw new Error('RSA public key numbers must be non-empty');
+  }
+  return derSequence(
+    derSequence(OID_RSA_ENCRYPTION, derNull()),
+    derBitString(derSequence(derInteger(numbers.modulus), derInteger(numbers.exponent))),
   );
 }
 
@@ -269,28 +316,58 @@ function ecdsaSha256Algorithm(): Uint8Array {
   return derSequence(OID_ECDSA_SHA256);
 }
 
+/** AlgorithmIdentifier for sha256WithRSAEncryption（RFC 3279 §2.2.1：参数 MUST 为 NULL） */
+function sha256WithRsaAlgorithm(): Uint8Array {
+  return derSequence(OID_SHA256_WITH_RSA, derNull());
+}
+
 /**
  * 编码 TBSCertificate 并签名，返回完整自签证书 DER。
- * 结构：v3 / serial / ecdsa-with-SHA256 / issuer=subject(CN) / UTCTime 有效期 /
- * SPKI(EC P-256) / [3] SAN。
+ * 结构：v3 / serial / 签名算法标识 / issuer=subject(CN) / UTCTime 有效期 / SPKI / [3] SAN。
+ * 算法由 signer.keyAlgorithm() 决定（缺省 ec-p256）：
+ *  - ec-p256：SPKI(EC P-256 点) + ecdsa-with-SHA256，签名值 P1363 raw → DER 后入 BIT STRING；
+ *  - rsa-2048：SPKI(RSA n/e) + sha256WithRSAEncryption，签名原始字节直接入 BIT STRING。
  */
 export async function buildSelfSignedCertificate(
   params: SelfSignedCertParams,
   signer: X509SignerPort,
 ): Promise<Uint8Array> {
-  const point: Uint8Array = await signer.publicKeyPointUncompressed();
-  const tbs: Uint8Array = derSequence(
+  const algo: X509KeyAlgorithm = signer.keyAlgorithm !== undefined ? signer.keyAlgorithm() : 'ec-p256';
+  let spki: Uint8Array;
+  let sigAlg: Uint8Array;
+  let sigBytes: Uint8Array;
+  if (algo === 'rsa-2048') {
+    if (signer.rsaPublicKeyNumbers === undefined || signer.signRsaSha256 === undefined) {
+      throw new Error('X509SignerPort: rsa-2048 requires rsaPublicKeyNumbers() and signRsaSha256()');
+    }
+    spki = spkiRsa(await signer.rsaPublicKeyNumbers());
+    sigAlg = sha256WithRsaAlgorithm();
+    const tbsRsa: Uint8Array = buildTbs(params, sigAlg, spki);
+    sigBytes = await signer.signRsaSha256(tbsRsa);
+    return derSequence(tbsRsa, sigAlg, derBitString(sigBytes));
+  }
+  if (signer.publicKeyPointUncompressed === undefined || signer.signEcdsaSha256 === undefined) {
+    throw new Error('X509SignerPort: ec-p256 requires publicKeyPointUncompressed() and signEcdsaSha256()');
+  }
+  spki = spkiEcP256(await signer.publicKeyPointUncompressed());
+  sigAlg = ecdsaSha256Algorithm();
+  const tbs: Uint8Array = buildTbs(params, sigAlg, spki);
+  const rawSig: Uint8Array = await signer.signEcdsaSha256(tbs);
+  return derSequence(tbs, sigAlg, derBitString(ecdsaRawToDer(rawSig)));
+}
+
+/** TBSCertificate 公共结构（算法无关部分） */
+function buildTbs(params: SelfSignedCertParams, sigAlg: Uint8Array, spki: Uint8Array): Uint8Array {
+  return derSequence(
     derContextExplicit(0, derInteger(new Uint8Array([2]))),
     derInteger(params.serialNumber),
-    ecdsaSha256Algorithm(),
+    sigAlg,
     subjectName(params.commonName),
     derSequence(derUtcTime(params.notBefore), derUtcTime(params.notAfter)),
     subjectName(params.commonName),
-    spkiEcP256(point),
+    spki,
     derContextExplicit(3, derSequence(sanExtension(params))),
   );
-  const rawSig: Uint8Array = await signer.signEcdsaSha256(tbs);
-  return derSequence(tbs, ecdsaSha256Algorithm(), derBitString(ecdsaRawToDer(rawSig)));
 }
 
 // ---------------------------------------------------------------------------

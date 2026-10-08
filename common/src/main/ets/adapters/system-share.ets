@@ -18,11 +18,15 @@ import { ShareHandoff } from '../core/ports';
  * （5.0.0(12)）Share Kit 文档口径编写；真机编译若遇签名差异，以 SDK 报错为准修正。
  */
 export class SystemShareHandoff implements ShareHandoff {
-  constructor(private readonly context: common.UIAbilityContext) {}
+  private readonly context: common.UIAbilityContext;
+
+  constructor(context: common.UIAbilityContext) {
+    this.context = context;
+  }
 
   async shareFile(absPath: string, displayName: string): Promise<boolean> {
     const data: systemShare.SharedData = new systemShare.SharedData({
-      utd: utd.UniformDataType.ZIP,
+      utd: utd.UniformDataType.ZIP_ARCHIVE,
       uri: fileUri.getUriFromPath(absPath),
       title: displayName,
       description: 'ClipNote 拾记 · 可读导出包（非备份，不能用于恢复）',

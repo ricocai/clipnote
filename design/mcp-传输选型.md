@@ -80,4 +80,31 @@ WBS §7「一个 MCP 通道」预算 8~12 人日。按本决议拆分：
 
 - **R-A 设备侧证书生成路径未真机验证**（E5 置信中）→ 缓解：证书层抽象为端口，鸿蒙适配器失败时服务降级为"不启动 + UI 明示"，绝不静默退回明文 HTTP；G3 前真机探测先行。
 - **R-B Host 对自签证书的 UX 行为未知**（Cherry Studio 是否展示指纹/能否跳过校验）→ G3 联调抓包确认，必要时输出 Host 侧配置指引；不为此改协议。
+
+## 7. 实测结论追记（2026-10-07，API 26 模拟器端到端）
+
+R-A 已收口，三条平台实测事实（适配器文件头有同源记录，勿回退）：
+
+1. **netstack TLS 服务端不支持 EC 私钥**（决议级变更）：`tls_context_server.cpp`
+   的 `SetKeyAndCheck` 只有 RSA/DSA 分支，EC 私钥解析正常但装不进 SSL_CTX，
+   `SSL_CTX_check_private_key` 必失败（日志 "Check if the certificate matches
+   the private key is error"），握手挂死。**TLS 材料从 ECC P-256 改 RSA 2048**：
+   cryptoFramework `createAsyKeyGenerator('RSA2048')` + `createSign('RSA2048|PKCS1|SHA256')`，
+   私钥经 `priKey.getEncodedPem('PKCS8')` 直接产 PEM，公钥成分经
+   `getAsyKeySpec(RSA_N_BN/RSA_PK_BN)` 取 bigint。core/x509-selfsign.ts 的签名端口
+   按算法种类分派（`keyAlgorithm()`），EC 路径保留（本机 node 测试覆盖）。
+   指纹算法不变（证书 DER 的 SHA-256），协议与配对流程不受影响；已配对设备升级后
+   因密钥类型变化需重新配对（指纹改变，TOFU 语义正确）。
+2. **socket 数据事件名是 'message' 而非 'data'**（SocketMessageInfo
+   { message, remoteInfo }），连接对象无 remoteAddress 属性，对端地址随 message
+   事件 remoteInfo 到达；'close'/'error' 事件名与 d.ts 一致。
+3. **netstack 对 send 实参做原生类型检查**：`ArrayBuffer.prototype.slice` 的产物
+   通不过（"first param is not string or arraybuffer"），须显式
+   `new ArrayBuffer + Uint8Array 拷贝`；且 TLS 连接 `send(ArrayBuffer)` 直收数据，
+   与 TCP 连接 `send(TCPSendOptions)` 对象形态不同。
+
+端到端验证：模拟器（OpenHarmony 7.0.0.105, sdkApi=26）上 MCP 服务启动
+（`mcp.server.started`），`curl -k https://127.0.0.1:8765/`（hdc fport）TLS 握手成功、
+收到真实 HTTP 404 `{"error":"not found"}`（裸 GET 无配对属预期拒绝）；openssl 核对
+证书为 rsaEncryption + sha256WithRSAEncryption，指纹与设置页 TOFU 展示逐位一致。
 - **R-C 前台即停语义与 Host 重连风暴** → 退后台关闭服务即 404/连接断开，Host 必须重新 initialize（规范内行为）；配对码退后台失效，控制滥用面。

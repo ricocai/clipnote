@@ -1,4 +1,4 @@
-import { PasteButtonOnClickResult, router } from '@kit.ArkUI';
+import { router } from '@kit.ArkUI';
 import {
   CaptureKind,
   CaptureResult,
@@ -303,7 +303,11 @@ struct Index {
       return;
     }
     if (result.kind === CaptureKind.MERGED) {
-      this.notice = '内容与刚才保存的一致，已合并为同一条（未产生重复）。';
+      // Q4 持久化去重（近 2 日窗口）与 3 秒幂等窗的文案区分：窗口口径如实告知
+      this.notice = result.reasons.indexOf('dedupe:persisted_within_2d') >= 0
+          || result.reasons.indexOf('dedupe:note_within_2d') >= 0
+        ? '近两日内已保存过相同内容，未产生重复条目。'
+        : '内容与刚才保存的一致，已合并为同一条（未产生重复）。';
       return;
     }
     if (result.kind === CaptureKind.PENDING_CONFIRM) {

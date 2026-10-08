@@ -1,10 +1,20 @@
 /**
- * 鸿蒙证书权威适配器：cryptoFramework 生成 EC(P-256) 密钥对 + 系统 Sign 自签，
+ * 鸿蒙证书权威适配器：cryptoFramework 生成 RSA 2048 密钥对 + 系统 Sign 自签，
  * 证书结构由 core/x509-selfsign.ts 纯 DER 编码（本机已验证）。
  * 私钥/证书持久化于应用沙箱（common IFileStore），PEM 形态供 TLSSocketServer 加载。
  *
- * ⚠ 真机验证项（design/mcp-传输选型.md R-A，置信度中）：本文件未经 DevEco 编译
- * 与真机验证。失败必须显式抛错交 UI 提示，**绝不静默退回明文 HTTP**（设计 §4.5.3）。
+ * 真机实测结论（2026-10，API 26 模拟器，design/mcp-传输选型.md R-A 收口）：
+ *  - netstack TLS 服务端（tls_context_server.cpp SetKeyAndCheck）装私钥只有
+ *    RSA/DSA 分支，**EC 私钥解析正常但装不进 SSL_CTX**，
+ *    SSL_CTX_check_private_key 必失败（日志 "Check if the certificate matches
+ *    the private key is error"），握手挂死——故从 ECC P-256 改 RSA 2048，勿回退；
+ *  - RSA 私钥用 priKey.getEncodedPem('PKCS8') 直接产 PEM（API 12+ 支持 RSA，
+ *    实测模拟器可用）；EC 时代 getEncoded()/getEncodedDer 的坑不再适用；
+ *  - RSA 公钥成分经 pubKey.getAsyKeySpec(RSA_N_BN/RSA_PK_BN) 取 bigint
+ *    （API 10+），不再走 EC 的"SPKI 尾部 65 字节"；
+ *  - RSA 签名为 PKCS#1 v1.5 原始字节，直接入证书 BIT STRING，无形态转换。
+ *
+ * 失败必须显式抛错交 UI 提示，**绝不静默退回明文 HTTP**（设计 §4.5.3）。
  *
  * 持久化布局（filesDir 下）：
  *   mcp-tls/key.pem    PKCS#8 私钥（不出设备、不进日志）
@@ -13,7 +23,7 @@
  * 加载时三件套缺一即报错（不猜测、不重建 —— 避免无感丢失已配对客户端）。
  */
 
-import { cryptoFramework } from '@kit.UniversalCryptoKit';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 
 import { IClock, IFileStore, IRandom } from 'common';
 import {
@@ -24,6 +34,8 @@ import {
   buildSelfSignedCertificate,
   derToPem,
   pemToDer,
+  RsaPublicKeyNumbers,
+  X509KeyAlgorithm,
   X509SignerPort,
 } from '../core/x509-selfsign';
 
@@ -39,12 +51,17 @@ interface TlsMeta {
 export class HarmonyCertificateAuthority implements ICertificateAuthority {
   private cached: ServerTlsMaterial | undefined;
 
-  constructor(
-    private readonly fs: IFileStore,
-    private readonly dir: string,
-    private readonly random: IRandom,
-    private readonly clock: IClock,
-  ) {}
+  private readonly fs: IFileStore;
+  private readonly dir: string;
+  private readonly random: IRandom;
+  private readonly clock: IClock;
+
+  constructor(fs: IFileStore, dir: string, random: IRandom, clock: IClock) {
+    this.fs = fs;
+    this.dir = dir;
+    this.random = random;
+    this.clock = clock;
+  }
 
   async current(): Promise<ServerTlsMaterial> {
     if (this.cached !== undefined) {
@@ -147,12 +164,16 @@ class CryptoFrameworkSigner implements X509SignerPort {
   /** 惰性生成密钥对（generateAndPersist 中先调用，再取 PEM）。 */
   private async ensureKeyPair(): Promise<cryptoFramework.KeyPair> {
     if (this.keyPair === undefined) {
-      const gen = cryptoFramework.createAsyKeyGenerator('ECC256');
+      const gen: cryptoFramework.AsyKeyGenerator = cryptoFramework.createAsyKeyGenerator('RSA2048');
       this.keyPair = await gen.generateKeyPair();
-      const encoded = this.keyPair.priKey.getEncoded();
-      this.keyPem = derToPem(encoded.data, 'PRIVATE KEY');
+      // RSA 私钥 PKCS#8 PEM：API 12+ 支持（d.ts 注明），直接产出 PEM 字符串
+      this.keyPem = this.keyPair.priKey.getEncodedPem('PKCS8');
     }
     return this.keyPair;
+  }
+
+  keyAlgorithm(): X509KeyAlgorithm {
+    return 'rsa-2048';
   }
 
   privateKeyPem(): string {
@@ -162,24 +183,38 @@ class CryptoFrameworkSigner implements X509SignerPort {
     return this.keyPem;
   }
 
-  async publicKeyPointUncompressed(): Promise<Uint8Array> {
-    const keyPair = await this.ensureKeyPair();
-    const spki: Uint8Array = keyPair.pubKey.getEncoded().data;
-    // SPKI 尾部即 EC 非压缩点（0x04 || X || Y，65 字节），与本机 node:crypto 行为一致
-    if (spki.length < 65 || spki[spki.length - 65] !== 0x04) {
-      throw new Error('unexpected EC public key encoding from cryptoFramework');
-    }
-    return spki.subarray(spki.length - 65);
+  async rsaPublicKeyNumbers(): Promise<RsaPublicKeyNumbers> {
+    const keyPair: cryptoFramework.KeyPair = await this.ensureKeyPair();
+    const n: bigint = keyPair.pubKey.getAsyKeySpec(cryptoFramework.AsyKeySpecItem.RSA_N_BN) as bigint;
+    const e: bigint = keyPair.pubKey.getAsyKeySpec(cryptoFramework.AsyKeySpecItem.RSA_PK_BN) as bigint;
+    return { modulus: bigintToBytes(n), exponent: bigintToBytes(e) };
   }
 
-  async signEcdsaSha256(tbsDer: Uint8Array): Promise<Uint8Array> {
-    const keyPair = await this.ensureKeyPair();
-    const signer = cryptoFramework.createSign('ECC256|SHA256');
+  async signRsaSha256(tbsDer: Uint8Array): Promise<Uint8Array> {
+    const keyPair: cryptoFramework.KeyPair = await this.ensureKeyPair();
+    const signer: cryptoFramework.Sign = cryptoFramework.createSign('RSA2048|PKCS1|SHA256');
     await signer.init(keyPair.priKey);
-    const signature = await signer.sign({ data: tbsDer });
-    // cryptoFramework ECC 签名为 P1363 raw（r||s 各 32 字节），即 X509SignerPort 契约形态
+    const signature: cryptoFramework.DataBlob = await signer.sign({ data: tbsDer });
+    // RSA 签名为 PKCS#1 v1.5 原始字节，内核直接入 BIT STRING，无形态转换
     return signature.data;
   }
+}
+
+/** bigint → 大端无符号字节（去前导零；0 编码为单字节 0x00） */
+function bigintToBytes(v: bigint): Uint8Array {
+  let hex: string = v.toString(16);
+  if (hex.length % 2 === 1) {
+    hex = '0' + hex;
+  }
+  const raw: Uint8Array = new Uint8Array(hex.length / 2);
+  for (let i: number = 0; i < raw.length; i++) {
+    raw[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  let start: number = 0;
+  while (start < raw.length - 1 && raw[start] === 0) {
+    start++;
+  }
+  return raw.subarray(start);
 }
 
 function hexLower(bytes: Uint8Array): string {

@@ -35,4 +35,3 @@ export * from './src/main/ets/core/controller';
 export { SystemTtsDriver } from './src/main/ets/adapters/system-tts-driver';
 export { PreferencesTtsSettingsStore } from './src/main/ets/adapters/preferences-settings-store';
 export { AvSessionControls } from './src/main/ets/adapters/av-session-controls';
-export type { PlaybackCommandSink, InterruptHandler } from './src/main/ets/adapters/av-session-controls';

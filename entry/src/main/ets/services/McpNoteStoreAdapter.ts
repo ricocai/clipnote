@@ -15,7 +15,9 @@
  * 本机基线（同一源码两边编译的最低公共分母）。
  */
 
-import { NoteRepository, NoteService, NoteSource } from 'common';
+import { NoteService } from 'common/src/main/ets/core/notes';
+import { NoteRepository } from 'common/src/main/ets/core/data/note-repository';
+import { NoteSource } from 'common/src/main/ets/core/model';
 import {
   NoteAppendResult,
   NoteCreateResult,
@@ -23,7 +25,7 @@ import {
   NoteSearchRow,
   NoteStoreLike,
   NoteTagRow,
-} from 'mcp';
+} from 'mcp/src/main/ets/core/dispatcher';
 
 export interface McpNoteStoreAdapterDeps {
   readonly service: NoteService;
@@ -31,7 +33,11 @@ export interface McpNoteStoreAdapterDeps {
 }
 
 export class McpNoteStoreAdapter implements NoteStoreLike {
-  constructor(private readonly deps: McpNoteStoreAdapterDeps) {}
+  private readonly deps: McpNoteStoreAdapterDeps;
+
+  constructor(deps: McpNoteStoreAdapterDeps) {
+    this.deps = deps;
+  }
 
   async search(query: string, limit: number): Promise<NoteSearchRow[]> {
     const hits = await this.deps.service.searchNotes(query, { limit: limit });

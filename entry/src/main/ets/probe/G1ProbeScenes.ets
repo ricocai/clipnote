@@ -2,7 +2,7 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { deviceInfo } from '@kit.BasicServicesKit';
 import { wantConstant } from '@kit.AbilityKit';
 import { Want } from '@kit.AbilityKit';
-import { fs } from '@kit.CoreFileKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { G1ProbeLog } from './G1ProbeLog';
 
 /**
@@ -18,15 +18,24 @@ import { G1ProbeLog } from './G1ProbeLog';
 /** 探针总开关。false 时 EntryAbility 的探针块退化为纯日志，不触碰剪贴板。 */
 export const G1_PROBE_ENABLED: boolean = true;
 
-/** 场景编号与报告章节一一对应 */
-export const SCENE = {
+/** 场景编号与报告章节一一对应（ArkTS 无 as const，用显式只读接口固化取值） */
+export interface G1SceneTable {
+  readonly DEVICE_INFO: string;
+  readonly MANUAL_READ: string;
+  readonly PASTE_BUTTON: string;
+  readonly SHARE_WANT: string;
+  readonly SHARE_URI_COPY: string;
+  readonly FOREGROUND_READ: string;
+}
+
+export const SCENE: G1SceneTable = {
   DEVICE_INFO: 'q0-device-info',
   MANUAL_READ: 'q1-manual-read',
   PASTE_BUTTON: 'q2-paste-button',
   SHARE_WANT: 'q3-share-want',
   SHARE_URI_COPY: 'q3-share-uri-copy',
   FOREGROUND_READ: 'q4-foreground-read',
-} as const;
+};
 
 /** 记录设备指纹：每项探测结论都必须能回溯到具体机型/系统/API level */
 export function recordDeviceInfo(): void {
@@ -52,7 +61,7 @@ function describePasteData(data: pasteboard.PasteData): string {
   parts.push(`hasPixelMap=${data.hasMimeType(pasteboard.MIMETYPE_PIXELMAP)}`);
   for (let i: number = 0; i < data.getRecordCount(); i++) {
     const rec: pasteboard.PasteDataRecord = data.getRecord(i);
-    parts.push(`r${i}.mime=${rec.getMimeType()}`);
+    parts.push(`r${i}.mime=${rec.mimeType}`);
   }
   const text: string = data.getPrimaryText();
   parts.push(`primaryTextLen=${text.length}`);

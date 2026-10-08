@@ -72,6 +72,24 @@ export class InboxRepository {
     return items;
   }
 
+  /**
+   * 持久化去重查询（真机验收 Q4）：取时间窗内同内容摘要、同类型的最新一条（任意状态）。
+   * 收件箱表规模受容量/保留期约束（PENDING ≤ 容量，全量 ≤ 保留期），窗口过滤 + LIMIT 1
+   * 的代价有界，无需为 sha256 单独建索引。
+   */
+  async findBySha256Since(sha256: string, kind: ClipKind, sinceMs: number): Promise<ClipboardItem | undefined> {
+    const rows: SqlRow[] = await this.deps.db.query(
+      `SELECT ${ITEM_COLUMNS} FROM clipboard_item
+       WHERE sha256 = ? AND kind = ? AND captured_at >= ?
+       ORDER BY captured_at DESC LIMIT 1`,
+      [sha256, kind, sinceMs],
+    );
+    if (rows.length === 0) {
+      return undefined;
+    }
+    return rowToItem(rows[0]);
+  }
+
   /** 状态迁移（用户确认保存 / 放弃 / 待确认）；返回是否命中 */
   async updateState(id: string, state: InboxState): Promise<boolean> {
     const existing = await this.getById(id);

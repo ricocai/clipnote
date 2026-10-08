@@ -1,9 +1,24 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/xiaogangcai/.ohos/config/default_clipnote_N0w2FSe5nUNtgDF8bm9Tt8nKTmvzPAVeh3wB_NB7BkU=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "",
+          "profile": "/Users/xiaogangcai/.ohos/config/default_clipnote_N0w2FSe5nUNtgDF8bm9Tt8nKTmvzPAVeh3wB_NB7BkU=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/xiaogangcai/.ohos/config/default_clipnote_N0w2FSe5nUNtgDF8bm9Tt8nKTmvzPAVeh3wB_NB7BkU=.p12",
+          "storePassword": "",
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
+        "signingConfig": "default",
         "compatibleSdkVersion": "5.0.0(12)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
@@ -11,7 +26,8 @@
             "caseSensitiveCheck": true,
             "useNormalizedOHMUrl": true
           }
-        }
+        },
+        "targetSdkVersion": "26.0.0"
       }
     ],
     "buildModeSet": [

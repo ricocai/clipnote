@@ -23,6 +23,7 @@ import {
   IngestOutcome,
   Note,
   NoteSource,
+  PERSISTED_DEDUPE_WINDOW_MS,
 } from './model';
 import { ClipIngestService, IngestImageInput } from './clip';
 import { InboxRepository } from './data/inbox-repository';
@@ -38,10 +39,16 @@ export const INBOX_LIST_LIMIT: number = 200;
 
 export interface InboxPolicy {
   readonly capacity: number;
+  /**
+   * 持久化去重时间窗（真机验收 Q4：只对最近 2 日内的条目/笔记去重）。
+   * 缺省取 model.PERSISTED_DEDUPE_WINDOW_MS；测试可注入更小窗口。
+   */
+  readonly dedupeWindowMs?: number;
 }
 
 export const DEFAULT_INBOX_POLICY: InboxPolicy = {
   capacity: DEFAULT_INBOX_CAPACITY,
+  dedupeWindowMs: PERSISTED_DEDUPE_WINDOW_MS,
 };
 
 export interface InboxServiceDeps {
@@ -75,9 +82,13 @@ export interface CaptureResult {
 
 export class InboxService {
   private readonly policy: InboxPolicy;
+  private readonly dedupeWindowMs: number;
 
   constructor(private readonly deps: InboxServiceDeps) {
     this.policy = deps.policy === undefined ? DEFAULT_INBOX_POLICY : deps.policy;
+    this.dedupeWindowMs = this.policy.dedupeWindowMs === undefined
+      ? PERSISTED_DEDUPE_WINDOW_MS
+      : this.policy.dedupeWindowMs;
   }
 
   /** 采集入口的统一路径：管线判定 → 按决策落盘或挂起 → 容量/保留期整理 */
@@ -94,6 +105,10 @@ export class InboxService {
     if (outcome.merged) {
       return { kind: CaptureKind.MERGED, item: outcome.item, reasons: outcome.reasons, evicted: 0 };
     }
+    const persistedDup: CaptureResult | undefined = await this.findPersistedDuplicate(outcome.item);
+    if (persistedDup !== undefined) {
+      return persistedDup;
+    }
     await this.deps.inbox.save(outcome.item);
     const evicted: number = await this.housekeep();
     return { kind: CaptureKind.PERSISTED, item: outcome.item, reasons: outcome.reasons, evicted };
@@ -109,9 +124,56 @@ export class InboxService {
     if (outcome.merged) {
       return { kind: CaptureKind.MERGED, item: outcome.item, reasons: outcome.reasons, evicted: 0 };
     }
+    const persistedDup: CaptureResult | undefined = await this.findPersistedDuplicate(outcome.item);
+    if (persistedDup !== undefined) {
+      return persistedDup;
+    }
     await this.deps.inbox.save(outcome.item);
     const evicted: number = await this.housekeep();
     return { kind: CaptureKind.PERSISTED, item: outcome.item, reasons: outcome.reasons, evicted };
+  }
+
+  /**
+   * 持久化去重（真机验收 Q4）：内存 3 秒窗未命中后，查最近 dedupeWindowMs（默认 2 日）内
+   * 已落盘的同内容收件箱条目（任意状态）与同来源摘要的未删除笔记 —— 命中即合并，
+   * 不产生新条目；窗口外同内容视为新内容正常入库。
+   * 敏感内容（REQUIRE_CONFIRM）在调用点之前已分流，不会走到这里被静默合并。
+   */
+  private async findPersistedDuplicate(item: ClipboardItem): Promise<CaptureResult | undefined> {
+    const sinceMs: number = this.deps.clock.nowMs() - this.dedupeWindowMs;
+    const inboxHit: ClipboardItem | undefined = await this.deps.inbox.findBySha256Since(
+      item.sha256, item.kind, sinceMs);
+    if (inboxHit !== undefined) {
+      this.deps.logger.log(LogLevel.DEBUG, 'inbox_dedupe_persisted', {
+        kind: item.kind,
+        entry: item.entry,
+        hit: 'inbox',
+        hitId: inboxHit.id,
+      });
+      return {
+        kind: CaptureKind.MERGED,
+        item: inboxHit,
+        reasons: ['dedupe:persisted_within_2d'],
+        evicted: 0,
+      };
+    }
+    const noteHit: Note | undefined = await this.deps.notes.findByOriginHashSince(item.sha256, sinceMs);
+    if (noteHit !== undefined) {
+      this.deps.logger.log(LogLevel.DEBUG, 'inbox_dedupe_persisted', {
+        kind: item.kind,
+        entry: item.entry,
+        hit: 'note',
+        hitId: noteHit.id,
+      });
+      // 命中的是笔记而非收件箱条目：返回本次未落盘的 item 承载上下文，kind=MERGED 表明未产生新条目
+      return {
+        kind: CaptureKind.MERGED,
+        item,
+        reasons: ['dedupe:note_within_2d'],
+        evicted: 0,
+      };
+    }
+    return undefined;
   }
 
   /**

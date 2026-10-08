@@ -88,8 +88,9 @@ function extractDirect(want: Want, texts: string[], files: ShareFileRef[]): void
   if (typeof stream === 'string') {
     uris.push(stream);
   } else if (Array.isArray(stream)) {
-    for (let i: number = 0; i < stream.length; i++) {
-      const v = stream[i];
+    const list: Object[] = stream as Object[];
+    for (let i: number = 0; i < list.length; i++) {
+      const v: Object = list[i];
       if (typeof v === 'string') {
         uris.push(v);
       }

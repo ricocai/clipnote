@@ -16,7 +16,8 @@
  *  - thematic_break / raw：跳过（model.ts 枚举注释已注明 raw「不高亮、不朗读」）。
  */
 
-import { BlockType, DocumentBlock, SpeechSegment, normalizeForSpeech, splitForSpeech } from 'common';
+import { BlockType, DocumentBlock } from 'common/src/main/ets/core/model';
+import { SpeechSegment, normalizeForSpeech, splitForSpeech } from 'common/src/main/ets/core/speech';
 
 /** 一条待发朗读段：段文本 + 高亮锚点（块下标） */
 export interface SpeechPlanItem {

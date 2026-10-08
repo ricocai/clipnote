@@ -114,14 +114,25 @@ test('ShareIntake: 时间窗内重复分享被幂等合并，不产生重复条�
   assert.equal(second.persisted, 0);
   assert.equal(await f.inbox.countByState(InboxState.PENDING), 1);
 
-  // 越过幂等窗（3s）后再分享：是新条目（保留用户"再次保存"语义）
+  // 越过 3s 幂等窗但仍在 2 日持久化去重窗内（真机验收 Q4）：仍合并，不产生重复条目
   f.clock.advance(4000);
   const third = await f.svc.handleShare({
     action: 'ohos.want.action.sendData',
     texts: ['同一段分享文本'],
     files: [],
   });
-  assert.equal(third.persisted, 1);
+  assert.equal(third.merged, 1);
+  assert.equal(third.persisted, 0);
+  assert.equal(await f.inbox.countByState(InboxState.PENDING), 1);
+
+  // 越过 2 日去重窗后再分享：是新条目（Q4 窗口外视为新内容）
+  f.clock.advance(3 * 24 * 60 * 60 * 1000);
+  const fourth = await f.svc.handleShare({
+    action: 'ohos.want.action.sendData',
+    texts: ['同一段分享文本'],
+    files: [],
+  });
+  assert.equal(fourth.persisted, 1);
   assert.equal(await f.inbox.countByState(InboxState.PENDING), 2);
 });
 

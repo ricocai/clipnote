@@ -15,6 +15,8 @@ import {
   derUtcTime,
   ecdsaDerToRaw,
   ecdsaRawToDer,
+  RsaPublicKeyNumbers,
+  X509KeyAlgorithm,
   X509SignerPort,
 } from '../../mcp/src/main/ets/core/x509-selfsign';
 
@@ -40,6 +42,30 @@ class NodeX509Signer implements X509SignerPort {
 
 function sha256Hex(der: Uint8Array): string {
   return crypto.createHash('sha256').update(Buffer.from(der)).digest('hex');
+}
+
+/** node:crypto 实现的 RSA 签名端口（对应鸿蒙 cryptoFramework RSA2048 适配器）。 */
+class NodeX509RsaSigner implements X509SignerPort {
+  private readonly keyPair: crypto.KeyPairKeyObjectResult =
+    crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+
+  keyAlgorithm(): X509KeyAlgorithm {
+    return 'rsa-2048';
+  }
+
+  async rsaPublicKeyNumbers(): Promise<RsaPublicKeyNumbers> {
+    // JWK 的 n/e 是 base64url 大端无符号 —— 与鸿蒙 getAsyKeySpec(RSA_N_BN/RSA_PK_BN) 同口径
+    const jwk = this.keyPair.publicKey.export({ format: 'jwk' });
+    return {
+      modulus: new Uint8Array(Buffer.from(jwk.n as string, 'base64url')),
+      exponent: new Uint8Array(Buffer.from(jwk.e as string, 'base64url')),
+    };
+  }
+
+  async signRsaSha256(tbsDer: Uint8Array): Promise<Uint8Array> {
+    // RSA PKCS#1 v1.5 + SHA-256 原始签名字节（无 P1363/DER 形态转换）
+    return new Uint8Array(crypto.sign('sha256', Buffer.from(tbsDer), this.keyPair.privateKey));
+  }
 }
 
 test('DER 基础编码：长度、INTEGER 正数填充、OID base-128', () => {
@@ -145,6 +171,61 @@ test('自签证书：不同密钥产出的证书互不复用签名（签名覆�
 test('PEM base64 编码与标准实现一致', () => {
   const data = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05]);
   assert.equal(base64Encode(data), Buffer.from(data).toString('base64'));
+});
+
+test('RSA 自签证书：X509 解析、自签名校验、指纹、有效期与 SAN', async () => {
+  const signer = new NodeX509RsaSigner();
+  const notBefore = new Date(Date.now() - 60 * 60 * 1000);
+  const notAfter = new Date(notBefore.getTime() + 5 * 365 * 24 * 3600 * 1000);
+  const serial = crypto.randomBytes(16);
+  const der = await buildSelfSignedCertificate({
+    commonName: 'clipnote-device',
+    serialNumber: new Uint8Array(serial),
+    notBefore,
+    notAfter,
+    sanDnsNames: ['clipnote.local'],
+    sanIps: ['192.168.1.5'],
+  }, signer);
+  const pem = derToPem(der, 'CERTIFICATE');
+
+  const cert = new crypto.X509Certificate(pem);
+  assert.equal(cert.subject, 'CN=clipnote-device');
+  assert.equal(cert.issuer, 'CN=clipnote-device');
+  // 自签名验证通过（证明 SPKI 的 RSA n/e 组装与签名值形态正确）
+  assert.equal(cert.verify(cert.publicKey), true);
+  // 公钥算法确为 RSA
+  assert.equal(cert.publicKey.asymmetricKeyType, 'rsa');
+
+  // 指纹 = DER 的 SHA-256（TOFU 展示值；与 EC 口径同一算法）
+  const expectedFp = sha256Hex(der);
+  const actualFp = cert.fingerprint256!.toLowerCase().replace(/:/g, '');
+  assert.equal(actualFp, expectedFp);
+
+  assert.equal(cert.serialNumber.toLowerCase(), serial.toString('hex'));
+  const san = cert.subjectAltName ?? '';
+  assert.match(san, /DNS:clipnote\.local/);
+  assert.match(san, /IP Address:192\.168\.1\.5/);
+});
+
+test('RSA 公钥成分形态：modulus 256 字节、exponent 65537、缺方法显式报错', async () => {
+  const signer = new NodeX509RsaSigner();
+  const numbers = await signer.rsaPublicKeyNumbers();
+  assert.equal(numbers.modulus.length, 256, 'RSA2048 modulus 应恰为 256 字节');
+  assert.deepEqual([...numbers.exponent], [0x01, 0x00, 0x01], 'exponent 应为 65537');
+
+  // 算法种类与端口方法不匹配时显式失败（不静默产出坏证书）
+  const broken: X509SignerPort = { keyAlgorithm: () => 'rsa-2048' };
+  await assert.rejects(
+    buildSelfSignedCertificate({
+      commonName: 'x',
+      serialNumber: new Uint8Array([1]),
+      notBefore: new Date(),
+      notAfter: new Date(),
+      sanDnsNames: [],
+      sanIps: [],
+    }, broken),
+    /rsa-2048 requires/,
+  );
 });
 
 test('pemToDer/base64Decode 与编码互逆（加载证书重算指纹的路径）', async () => {

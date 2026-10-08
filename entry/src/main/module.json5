@@ -42,10 +42,15 @@
             ],
             "uris": [
               {
-                "utd": "general.text"
+                // scheme 为 schema 必填的预留字段，实际不生效，统一配 file
+                "scheme": "file",
+                "utd": "general.text",
+                "maxFileSupported": 1
               },
               {
-                "utd": "general.plain-text"
+                "scheme": "file",
+                "utd": "general.plain-text",
+                "maxFileSupported": 1
               },
               {
                 "scheme": "file",
@@ -74,9 +79,10 @@
     ],
     "requestPermissions": [
       {
-        // 剪贴板读取。风险 R2：授权与弹窗策略随系统版本变化，
-        // 必须在 G1 真机验证 API 12/13 的实际行为后再决定是否需要 reason 字段。
+        // 剪贴板读取。风险 R2：授权与弹窗策略随系统版本变化，G1 真机仍需验证 API 12/13 实际行为。
+        // user_grant 权限编译期强制要求 reason + usedScene，reason 文案见 resources。
         "name": "ohos.permission.READ_PASTEBOARD",
+        "reason": "$string:reason_read_pasteboard",
         "usedScene": {
           "abilities": [
             "EntryAbility"
@@ -95,6 +101,16 @@
       },
       {
         "name": "ohos.permission.GET_NETWORK_INFO",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        // MCP LAN 服务展示/白名单本机地址用（wifiManager.getIpInfo 需要，normal 级）
+        "name": "ohos.permission.GET_WIFI_INFO",
         "usedScene": {
           "abilities": [
             "EntryAbility"

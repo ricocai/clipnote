@@ -18,13 +18,14 @@
  * 调用方按段串行 await 即得到自然的逐段推进。
  */
 
-import { SpeechSegment } from 'common';
+import { SpeechSegment } from 'common/src/main/ets/core/speech';
 import { ITtsEngine, TtsCallbacks, TtsEngineCapability, TtsSpeakRequest } from './contract';
 import { CreateEngineParams, TtsEngineDriver, TtsDriverListener } from './driver';
 import {
   DEFAULT_TTS_SETTINGS,
   TtsSettingsStore,
   TtsVoiceSettings,
+  TtsVoiceSettingsPatch,
   sanitizeTtsVoiceSettings,
 } from './settings';
 
@@ -57,6 +58,13 @@ interface PendingCompletion {
   readonly reject: (err: Error) => void;
 }
 
+/** 段边界暂停时暂存的在读段上下文（恢复时从段头重读） */
+interface PausedSegment {
+  readonly segment: SpeechSegment;
+  readonly speed: number;
+  readonly callbacks: TtsCallbacks;
+}
+
 export class SystemTtsEngine implements ITtsEngine {
   private stateValue: TtsEngineState = 'uninitialized';
   private cap: TtsEngineCapability | undefined = undefined;
@@ -67,15 +75,19 @@ export class SystemTtsEngine implements ITtsEngine {
   private lastGeneration: number = 0;
   private active: ActiveUtterance | undefined = undefined;
   private readonly pending = new Map<number, PendingCompletion>();
-  private paused: { segment: SpeechSegment; speed: number; callbacks: TtsCallbacks } | undefined = undefined;
+  private paused: PausedSegment | undefined = undefined;
+  private readonly driver: TtsEngineDriver;
+  private readonly settingsStore: TtsSettingsStore;
 
   constructor(
-    private readonly driver: TtsEngineDriver,
-    private readonly settingsStore: TtsSettingsStore = {
+    driver: TtsEngineDriver,
+    settingsStore: TtsSettingsStore = {
       load: (): Promise<TtsVoiceSettings> => Promise.resolve(DEFAULT_TTS_SETTINGS),
       save: (): Promise<void> => Promise.resolve(),
     },
   ) {
+    this.driver = driver;
+    this.settingsStore = settingsStore;
     const listener: TtsDriverListener = {
       onStart: (requestId: number): void => this.handleStart(requestId),
       onComplete: (requestId: number): void => this.handleComplete(requestId),
@@ -91,8 +103,11 @@ export class SystemTtsEngine implements ITtsEngine {
   }
 
   /** 用户设置入口：收敛→持久化→应用到下一次引擎创建（idle 时即时废弃旧引擎） */
-  async updateSettings(patch: { person?: number; speed?: number }): Promise<TtsVoiceSettings> {
-    this.settings = sanitizeTtsVoiceSettings({ ...this.settings, ...patch });
+  async updateSettings(patch: TtsVoiceSettingsPatch): Promise<TtsVoiceSettings> {
+    this.settings = sanitizeTtsVoiceSettings({
+      person: patch.person !== undefined ? patch.person : this.settings.person,
+      speed: patch.speed !== undefined ? patch.speed : this.settings.speed,
+    });
     await this.settingsStore.save(this.settings);
     // 音色（person）只在引擎创建时生效；idle 时主动废弃旧引擎，下次 speak 用新音色重建
     if (this.engineCreated && this.stateValue === 'idle') {

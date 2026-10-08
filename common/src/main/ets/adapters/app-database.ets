@@ -42,6 +42,12 @@ export class AppDataRuntime {
   private backupService: BackupService | undefined = undefined;
   private exportService: ExportService | undefined = undefined;
 
+  private readonly filesDir: string;
+  private readonly clock: IClock;
+  private readonly random: IRandom;
+  private readonly hasher: IHasher;
+  private readonly logger: ILogger;
+
   private constructor(
     executor: IRdbExecutor,
     notes: NoteRepository,
@@ -51,11 +57,11 @@ export class AppDataRuntime {
     mcpAudit: McpAuditRepository,
     exportRecords: ExportRecordRepository,
     blobCas: BlobCas,
-    private readonly filesDir: string,
-    private readonly clock: IClock,
-    private readonly random: IRandom,
-    private readonly hasher: IHasher,
-    private readonly logger: ILogger,
+    filesDir: string,
+    clock: IClock,
+    random: IRandom,
+    hasher: IHasher,
+    logger: ILogger,
   ) {
     this.executor = executor;
     this.notes = notes;
@@ -65,6 +71,11 @@ export class AppDataRuntime {
     this.mcpAudit = mcpAudit;
     this.exportRecords = exportRecords;
     this.blobCas = blobCas;
+    this.filesDir = filesDir;
+    this.clock = clock;
+    this.random = random;
+    this.hasher = hasher;
+    this.logger = logger;
   }
 
   /** 备份/恢复服务（S4-1）：懒装配，与启动恢复扫描共用同一套 CAS 与执行器 */

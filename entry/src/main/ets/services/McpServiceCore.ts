@@ -17,36 +17,32 @@
  * 按工具/集合粒度的授权 UI 规范属后续任务，此处为首发口径（代码注释标记）。
  */
 
-import {
-  IClock,
-  ILogger,
-  LogLevel,
-  IRandom,
-  NoteRepository,
-  NoteService,
-} from 'common';
+import { IClock, ILogger, LogLevel, IRandom } from 'common/src/main/ets/core/ports';
+import { NoteService } from 'common/src/main/ets/core/notes';
+import { NoteRepository } from 'common/src/main/ets/core/data/note-repository';
 import {
   AccessPolicy,
+  McpAuditStoreLike,
+  McpAuditStoreSink,
+  McpToolName,
+  PolicyGate,
+} from 'mcp/src/main/ets/core/access-policy';
+import {
   ClientCredentialStore,
-  ClipNoteMcpDispatcher,
   CredentialRecord,
-  DEFAULT_RATE_LIMIT,
   HasherLike,
+} from 'mcp/src/main/ets/core/credentials';
+import { ClipNoteMcpDispatcher, DEFAULT_RATE_LIMIT } from 'mcp/src/main/ets/core/dispatcher';
+import { StreamableHttpEndpoint } from 'mcp/src/main/ets/core/endpoint';
+import { PairingCodeView, PairingManager } from 'mcp/src/main/ets/core/pairing';
+import { McpServer, McpServerState } from 'mcp/src/main/ets/core/server';
+import { McpSessionManager } from 'mcp/src/main/ets/core/session';
+import {
   ICertificateAuthority,
   IServerSocket,
   IssuedCredential,
-  McpAuditStoreLike,
-  McpAuditStoreSink,
-  McpServer,
-  McpServerState,
-  McpSessionManager,
-  McpToolName,
-  PairingCodeView,
-  PairingManager,
   PendingPairingView,
-  PolicyGate,
-  StreamableHttpEndpoint,
-} from 'mcp';
+} from 'mcp/src/main/ets/core/transport-ports';
 import { McpNoteStoreAdapter } from './McpNoteStoreAdapter';
 
 /** 凭证有效期：30 天（与主机侧台架同一口径；到期须重新配对） */
@@ -103,8 +99,11 @@ export class McpServiceCore {
   private readonly gate: PolicyGate;
   private readonly server: McpServer;
 
-  constructor(private readonly deps: McpServiceCoreDeps) {
-    // ES2022 字段初始化先于构造参数属性赋值，组件装配必须在构造器体内进行
+  private readonly deps: McpServiceCoreDeps;
+
+  constructor(deps: McpServiceCoreDeps) {
+    this.deps = deps;
+    // ES2022 字段初始化先于构造器体赋值，组件装配必须在构造器体内进行
     this.policy = new AccessPolicy(deps.clock);
     this.credentials = new ClientCredentialStore(
       deps.random,

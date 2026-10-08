@@ -6,7 +6,7 @@
  * core/ 能用 `implements` 显式对齐并参与本机 node 验证；对外仍从 'speech' 导入。
  */
 
-import { SpeechSegment } from 'common';
+import { SpeechSegment } from 'common/src/main/ets/core/speech';
 
 /** 引擎能力探测结果；`available=false` 时 UI 必须显式提示或禁用，不得静默转在线（设计 §4.6） */
 export interface TtsEngineCapability {

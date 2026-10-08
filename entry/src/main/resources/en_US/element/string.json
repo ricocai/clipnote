@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "ClipNote"
+    },
+    {
+      "name": "reason_read_pasteboard",
+      "value": "Used to read clipboard content for quick note creation"
     }
   ]
 }

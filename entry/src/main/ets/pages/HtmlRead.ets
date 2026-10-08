@@ -61,8 +61,30 @@ function sourceLabel(source: NoteSource): string {
 }
 
 /** 未授权/缺失附件与远程请求的拦截响应：404 + 空体（不区分存在性，避免侧信道） */
-function blockedResponse(): webview.WebResourceResponse {
-  return new webview.WebResourceResponse('text/plain', 'utf-8', 404, 'Not Found', [], new Uint8Array(0));
+function blockedResponse(): WebResourceResponse {
+  const res: WebResourceResponse = new WebResourceResponse();
+  res.setResponseMimeType('text/plain');
+  res.setResponseEncoding('utf-8');
+  res.setResponseCode(404);
+  res.setReasonMessage('Not Found');
+  res.setResponseHeader([]);
+  res.setResponseData(new Uint8Array(0).buffer as ArrayBuffer);
+  return res;
+}
+
+/** 授权附件的拦截响应：按入库登记的 MIME 服务预载字节 */
+function attachmentResponse(mime: string, bytes: Uint8Array): WebResourceResponse {
+  const res: WebResourceResponse = new WebResourceResponse();
+  // 状态行必须显式 200：缺省时 Web 内核按失败处理（真机实测图片不显示的根因之一）
+  res.setResponseCode(200);
+  res.setReasonMessage('OK');
+  res.setResponseMimeType(mime);
+  res.setResponseEncoding('utf-8');
+  // 显式拷贝出独立 ArrayBuffer（Uint8Array .buffer 视图的桥接层类型检查/偏移风险）
+  const buf: ArrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buf).set(bytes);
+  res.setResponseData(buf);
+  return res;
 }
 
 @Entry
@@ -148,35 +170,34 @@ struct HtmlRead {
 
   /** 审计落日志（§4.5.5：类别 + 截断细节，不记正文；详情截断 htmlsafe 已保证） */
   private writeAudit(note: Note, events: HtmlAuditEvent[]): void {
-    const counts: Record<string, number> = {
-      tag_removed: 0,
-      attr_removed: 0,
-      url_blocked: 0,
-      css_blocked: 0,
-    };
+    const counts: Record<string, number> = {};
+    counts['tag_removed'] = 0;
+    counts['attr_removed'] = 0;
+    counts['url_blocked'] = 0;
+    counts['css_blocked'] = 0;
     for (let i: number = 0; i < events.length; i++) {
       counts[events[i].kind] += 1;
     }
-    this.svc.logger.log(LogLevel.INFO, 'html_view_opened', {
-      noteId: this.noteId,
-      source: String(note.source),
-      bytes: this.rawHtml.length,
-      blocked: events.length,
-    });
+    const openedFields: Record<string, string | number | boolean> = {};
+    openedFields['noteId'] = this.noteId;
+    openedFields['source'] = String(note.source);
+    openedFields['bytes'] = this.rawHtml.length;
+    openedFields['blocked'] = events.length;
+    this.svc.logger.log(LogLevel.INFO, 'html_view_opened', openedFields);
     if (events.length > 0) {
-      this.svc.logger.log(LogLevel.WARN, 'html_view_blocked', {
-        noteId: this.noteId,
-        tag_removed: counts['tag_removed'],
-        attr_removed: counts['attr_removed'],
-        url_blocked: counts['url_blocked'],
-        css_blocked: counts['css_blocked'],
-      });
+      const blockedFields: Record<string, string | number | boolean> = {};
+      blockedFields['noteId'] = this.noteId;
+      blockedFields['tag_removed'] = counts['tag_removed'];
+      blockedFields['attr_removed'] = counts['attr_removed'];
+      blockedFields['url_blocked'] = counts['url_blocked'];
+      blockedFields['css_blocked'] = counts['css_blocked'];
+      this.svc.logger.log(LogLevel.WARN, 'html_view_blocked', blockedFields);
       for (let i: number = 0; i < events.length && i < AUDIT_SAMPLE_LIMIT; i++) {
-        this.svc.logger.log(LogLevel.WARN, 'html_view_blocked_sample', {
-          noteId: this.noteId,
-          kind: events[i].kind,
-          detail: events[i].detail,
-        });
+        const sampleFields: Record<string, string | number | boolean> = {};
+        sampleFields['noteId'] = this.noteId;
+        sampleFields['kind'] = events[i].kind;
+        sampleFields['detail'] = events[i].detail;
+        this.svc.logger.log(LogLevel.WARN, 'html_view_blocked_sample', sampleFields);
       }
     }
   }
@@ -201,29 +222,31 @@ struct HtmlRead {
    *  - resource://rawfile/：可信壳自身资产，走默认加载；
    *  - 其余（http(s)/file/data:text 等一切外部或非包内资源）：一律 404 + 审计。
    */
-  private interceptRequest(event: { request: webview.WebResourceRequest }): webview.WebResourceResponse | undefined {
+  private interceptRequest(event: OnInterceptRequestEvent): WebResourceResponse | undefined {
     const url: string = event.request.getRequestUrl();
     if (url.startsWith(ATTACHMENT_SCHEME)) {
       const sha: string | undefined = attachmentRefOf(url);
       if (sha !== undefined && this.attachmentBytes.has(sha)) {
         const bytes: Uint8Array = this.attachmentBytes.get(sha) as Uint8Array;
         const mime: string = this.attachmentMime.has(sha) ? (this.attachmentMime.get(sha) as string) : 'application/octet-stream';
-        return new webview.WebResourceResponse(mime, 'utf-8', bytes);
+        return attachmentResponse(mime, bytes);
       }
-      this.svc.logger.log(LogLevel.WARN, 'html_view_request_blocked', {
-        noteId: this.noteId,
-        url: url.slice(0, 64),
-      });
+      this.logRequestBlocked(url);
       return blockedResponse();
     }
     if (url.startsWith('resource://')) {
       return undefined;
     }
-    this.svc.logger.log(LogLevel.WARN, 'html_view_request_blocked', {
-      noteId: this.noteId,
-      url: url.slice(0, 64),
-    });
+    this.logRequestBlocked(url);
     return blockedResponse();
+  }
+
+  /** 渲染期拦截审计（类别 + 截断 URL 前缀，不记正文） */
+  private logRequestBlocked(url: string): void {
+    const fields: Record<string, string | number | boolean> = {};
+    fields['noteId'] = this.noteId;
+    fields['url'] = url.slice(0, 64);
+    this.svc.logger.log(LogLevel.WARN, 'html_view_request_blocked', fields);
   }
 
   /** 导出 = 数据交接：原始 HTML 经系统分享交给用户选择的应用（显式用户动作，与编辑无关） */
@@ -238,10 +261,10 @@ struct HtmlRead {
         },
       };
       ctx.startAbility(want);
-      this.svc.logger.log(LogLevel.INFO, 'html_view_exported', {
-        noteId: this.noteId,
-        bytes: this.rawHtml.length,
-      });
+      const exportedFields: Record<string, string | number | boolean> = {};
+      exportedFields['noteId'] = this.noteId;
+      exportedFields['bytes'] = this.rawHtml.length;
+      this.svc.logger.log(LogLevel.INFO, 'html_view_exported', exportedFields);
     } catch (err) {
       this.notice = `导出失败：${String(err)}`;
     }
@@ -305,7 +328,7 @@ struct HtmlRead {
           .onPageEnd(() => {
             this.renderDocument();
           })
-          .onInterceptRequest((event: { request: webview.WebResourceRequest }) => {
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
             return this.interceptRequest(event);
           })
       } else if (this.notice.length === 0) {

@@ -12,10 +12,13 @@ export class PreferencesTtsSettingsStore implements TtsSettingsStore {
   private readonly keyPerson: string = 'person';
   private readonly keySpeed: string = 'speed';
 
-  constructor(
-    private readonly context: common.Context,
-    private readonly storeName: string = 'tts_voice_settings',
-  ) {}
+  private readonly context: common.Context;
+  private readonly storeName: string;
+
+  constructor(context: common.Context, storeName: string = 'tts_voice_settings') {
+    this.context = context;
+    this.storeName = storeName;
+  }
 
   async load(): Promise<TtsVoiceSettings> {
     const prefs: preferences.Preferences = await preferences.getPreferences(this.context, this.storeName);

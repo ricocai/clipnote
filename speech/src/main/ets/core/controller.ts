@@ -56,6 +56,18 @@ export interface SpeechPlaybackOptions {
   windowHigh?: number;
 }
 
+/** 播控指令的接收方（AVSession 播控适配把通知栏/锁屏指令映射到这里，entry 侧接到 SpeechPlaybackController） */
+export interface PlaybackCommandSink {
+  play(): void;
+  pause(): void;
+  next(): void;
+  prev(): void;
+  stop(): void;
+}
+
+/** 焦点中断上报（entry 侧映射到 controller.interrupt(reason)） */
+export type InterruptHandler = (reason: string) => void;
+
 export class SpeechPlaybackController {
   private planValue: SpeechPlan | undefined = undefined;
   private stateValue: PlaybackState = 'idle';

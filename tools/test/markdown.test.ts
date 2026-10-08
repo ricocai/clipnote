@@ -180,3 +180,13 @@ test('mdTokensFromJson：非数组负载抛错（桥接故障不得静默成"空
   assert.throws(() => mdTokensFromJson('{}'), /not an array/);
   assert.throws(() => mdTokensFromJson('null'), /not an array/);
 });
+
+test('mdTokensFromJson：ArkWeb 回调双重编码的字符串负载可再解一层（真机/模拟器实测行为）', () => {
+  const inner = JSON.stringify([{ type: 'inline', content: 'x', children: null }]);
+  const doubleEncoded = JSON.stringify(inner); // runJavaScript 回调对 string 返回值再编码一层
+  const tokens = mdTokensFromJson(doubleEncoded);
+  assert.equal(tokens.length, 1);
+  assert.equal(tokens[0].content, 'x');
+  // 双重编码后仍不是数组的，照旧抛错
+  assert.throws(() => mdTokensFromJson(JSON.stringify('{}')), /not an array/);
+});

@@ -251,6 +251,23 @@ export class NoteRepository {
     );
   }
 
+  /**
+   * 持久化去重查询（真机验收 Q4）：取时间窗内同来源摘要的未删除笔记（最新一篇）。
+   * 已软删（回收站）的笔记不参与去重 —— 用户删了再采集同内容，应得到新条目。
+   */
+  async findByOriginHashSince(originHash: string, sinceMs: number): Promise<Note | undefined> {
+    const notes: Note[] = await this.queryNotes(
+      `SELECT ${NOTE_COLUMNS} FROM note
+       WHERE origin_hash = ? AND deleted_at IS NULL AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [originHash, sinceMs],
+    );
+    if (notes.length === 0) {
+      return undefined;
+    }
+    return notes[0];
+  }
+
   /** 回收站列表（搜索结果与备份快照须排除 —— 调用方责任） */
   async listDeleted(limit: number, offset?: number): Promise<Note[]> {
     return this.queryNotes(

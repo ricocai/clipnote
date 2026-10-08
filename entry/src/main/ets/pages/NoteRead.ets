@@ -10,11 +10,14 @@ import {
 import {
   AvSessionControls,
   DEFAULT_TTS_SETTINGS,
+  PlaybackCommandSink,
   PlaybackState,
   SpeechPlaybackController,
   SpeechPlan,
   SpeechPlanItem,
+  TtsEngineCapability,
   TtsVoiceSettings,
+  TtsVoiceSettingsPatch,
   planSpeech,
 } from 'speech';
 import { AppServices } from '../services/AppServices';
@@ -53,14 +56,44 @@ import { ArkWebMarkdownTokenizer } from '../reader/ArkWebMarkdownTokenizer';
  */
 
 /** 未授权/缺失附件与远程请求的拦截响应：404 + 空体（不区分存在性，避免侧信道） */
-function blockedResponse(): webview.WebResourceResponse {
-  return new webview.WebResourceResponse('text/plain', 'utf-8', 404, 'Not Found', [], new Uint8Array(0));
+function blockedResponse(): WebResourceResponse {
+  const res: WebResourceResponse = new WebResourceResponse();
+  res.setResponseMimeType('text/plain');
+  res.setResponseEncoding('utf-8');
+  res.setResponseCode(404);
+  res.setReasonMessage('Not Found');
+  res.setResponseHeader([]);
+  res.setResponseData(new Uint8Array(0).buffer as ArrayBuffer);
+  return res;
+}
+
+/** 授权附件的拦截响应：按入库登记的 MIME 服务预载字节 */
+function attachmentResponse(mime: string, bytes: Uint8Array): WebResourceResponse {
+  const res: WebResourceResponse = new WebResourceResponse();
+  // 状态行必须显式 200：缺省时 Web 内核按失败处理（真机实测图片不显示的根因之一）
+  res.setResponseCode(200);
+  res.setReasonMessage('OK');
+  res.setResponseMimeType(mime);
+  res.setResponseEncoding('utf-8');
+  // 显式拷贝出独立 ArrayBuffer：Uint8Array 的 .buffer 视图在桥接层有原生类型检查
+  // 风险（与 netstack send 实测同一纪律），且可杜绝视图偏移泄漏
+  const buf: ArrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buf).set(bytes);
+  res.setResponseData(buf);
+  return res;
 }
 
 /** 语速档位（SPEED_MIN~SPEED_MAX 域内常用值；离散档位比滑杆更不易误触，S5-4） */
 const SPEED_OPTIONS: number[] = [0.75, 1, 1.25, 1.5, 2];
+
+/** 音色选项：person 为系统发音人编号 */
+interface VoiceOption {
+  readonly person: number;
+  readonly label: string;
+}
+
 /** 可选音色：官方口径仅 person=0（聆小珊）确认（G4 探测 E2/E6），多音色枚举属 TTS-2 真机项 */
-const VOICE_OPTIONS: { person: number; label: string }[] = [{ person: 0, label: '聆小珊' }];
+const VOICE_OPTIONS: VoiceOption[] = [{ person: 0, label: '聆小珊' }];
 
 @Entry
 @Component
@@ -68,6 +101,8 @@ struct NoteRead {
   @State title: string = '';
   @State notice: string = '';
   @State ready: boolean = false;
+  /** 朗读计划就绪标记：plan 是普通字段，异步回调赋值后靠本 @State 触发 rebuild 显示控制条 */
+  @State planReady: boolean = false;
 
   private noteId: string = '';
   private markdown: string = '';
@@ -115,11 +150,27 @@ struct NoteRead {
    * TTS 可用性预探测（S5-4，F-5/F-6 口径）：进页即 capability()——探测同时完成
    * 「启动即异步初始化」预热（首声不再含建引擎开销）；不可用 → 控制条置灰 + 文案，
    * 可用 → 回读持久化音色/语速作控件初值（默认值沿用引擎层默认）。
+   * 探测挂起即 bug：超时如实降级为「朗读不可用」，不得无声无息（真机验收教训）。
    */
   private async probeTts(): Promise<void> {
+    /** 探测超时阈值（引擎创建/设置装载均属本地调用，8s 足够宽松） */
+    const PROBE_TIMEOUT_MS: number = 8000;
     try {
       const engine = this.svc.speechEngine();
-      const cap = await engine.capability();
+      const cap: TtsEngineCapability = await Promise.race([
+        engine.capability(),
+        new Promise<TtsEngineCapability>((resolve: (value: TtsEngineCapability) => void): void => {
+          setTimeout((): void => {
+            resolve({
+              available: false,
+              engineName: 'system-text-to-speech',
+              offline: true,
+              voiceCount: 0,
+              reason: '引擎探测超时',
+            });
+          }, PROBE_TIMEOUT_MS);
+        }),
+      ]);
       if (!cap.available) {
         this.ttsUnavailableReason = cap.reason ?? '系统 TTS 不可用';
         return;
@@ -138,7 +189,7 @@ struct NoteRead {
    * 生效；播放中不中断在播段，新参数按段落边界生效（引擎段间回 idle 时重建，S5-1 语义），
    * 不新造状态机。控件回显以引擎返回的收敛值为准。
    */
-  private async applyVoiceSettings(patch: { person?: number; speed?: number }): Promise<void> {
+  private async applyVoiceSettings(patch: TtsVoiceSettingsPatch): Promise<void> {
     const saved: TtsVoiceSettings = await this.svc.speechEngine().updateSettings(patch);
     this.voicePerson = saved.person;
     this.voiceSpeed = saved.speed;
@@ -152,29 +203,30 @@ struct NoteRead {
 
   /** AVSession 播控（S5-2）：通知栏/锁屏指令映射到控制器；焦点中断 → 段边界暂停 */
   private attachAvSession(): void {
+    const sink: PlaybackCommandSink = {
+      play: (): void => {
+        if (!this.ttsAvailable || !this.canSpeak()) {
+          return; // 引擎不可用/无朗读计划时不触发（S5-4 禁用口径；play 对空计划会 throw）
+        }
+        this.speechNotice = '';
+        void this.ensurePlayback().play();
+      },
+      pause: (): void => {
+        void this.playback?.pause();
+      },
+      next: (): void => {
+        void this.playback?.next();
+      },
+      prev: (): void => {
+        void this.playback?.prev();
+      },
+      stop: (): void => {
+        void this.playback?.stop();
+      },
+    };
     void this.avControls.start(
       getContext(this) as common.Context,
-      {
-        play: (): void => {
-          if (!this.ttsAvailable || !this.canSpeak()) {
-            return; // 引擎不可用/无朗读计划时不触发（S5-4 禁用口径；play 对空计划会 throw）
-          }
-          this.speechNotice = '';
-          void this.ensurePlayback().play();
-        },
-        pause: (): void => {
-          void this.playback?.pause();
-        },
-        next: (): void => {
-          void this.playback?.next();
-        },
-        prev: (): void => {
-          void this.playback?.prev();
-        },
-        stop: (): void => {
-          void this.playback?.stop();
-        },
-      },
+      sink,
       (reason: string): void => {
         void this.playback?.interrupt(reason);
         this.speechNotice = `已暂停：${reason}`;
@@ -258,7 +310,10 @@ struct NoteRead {
     }
     this.renderStarted = true;
     const sourceJson: string = JSON.stringify(this.markdown);
-    this.controller.runJavaScript(`window.__clipnoteTokenize(${sourceJson})`, (err: Error, payload: string) => {
+    // 桥接约定（bridge.js）：入参是 JSON 文本，函数体内自行 JSON.parse。
+    // 经 JS 源码拼接调用时实参会先被 JS 引擎解一层字符串字面量，
+    // 因此这里必须再套一层 JSON.stringify（双重编码），桥内 parse 后才拿到原文/对象。
+    this.controller.runJavaScript(`window.__clipnoteTokenize(${JSON.stringify(sourceJson)})`, (err: Error, payload: string) => {
       if (err !== null && err !== undefined) {
         this.notice = `解析失败：${String(err)}`;
         return;
@@ -271,7 +326,10 @@ struct NoteRead {
         // 朗读计划与渲染块模型同源（S5-2）：块数组就地规划，换篇即换计划，
         // 控制器作废旧代际；高亮锚点（blockIndex）与 data-cl-i 一致
         this.plan = planSpeech(blocks, this.markdown);
-        if (this.canSpeak()) {
+        // plan 是普通字段且在本异步回调中赋值：必须显式触发一次 rebuild，
+        // 否则「probeTts 先于 plan 完成」时序下控制条永远不出现（真机/模拟器实测）
+        this.planReady = this.canSpeak();
+        if (this.planReady) {
           this.speechOrdinal++;
           const ctl: SpeechPlaybackController = this.ensurePlayback();
           void ctl.load(this.plan as SpeechPlan).then((): void => {
@@ -280,7 +338,7 @@ struct NoteRead {
         }
         const blocksJson: string = JSON.stringify(blocks);
         this.controller.runJavaScript(
-          `window.__clipnoteRender(${blocksJson}, ${sourceJson})`,
+          `window.__clipnoteRender(${JSON.stringify(blocksJson)}, ${JSON.stringify(sourceJson)})`,
           (renderErr: Error) => {
             if (renderErr !== null && renderErr !== undefined) {
               this.notice = `渲染失败：${String(renderErr)}`;
@@ -314,14 +372,14 @@ struct NoteRead {
    *  - http(s)：一律 404（默认离线，内容不自动联网）；
    *  - 其余（页面自身的 resource:// 资产等）：走默认加载。
    */
-  private interceptRequest(event: { request: webview.WebResourceRequest }): webview.WebResourceResponse | undefined {
+  private interceptRequest(event: OnInterceptRequestEvent): WebResourceResponse | undefined {
     const url: string = event.request.getRequestUrl();
     if (url.startsWith(ATTACHMENT_SCHEME)) {
       const sha: string | undefined = attachmentRefOf(url);
       if (sha !== undefined && this.attachmentBytes.has(sha)) {
         const bytes: Uint8Array = this.attachmentBytes.get(sha) as Uint8Array;
         const mime: string = this.attachmentMime.has(sha) ? (this.attachmentMime.get(sha) as string) : 'application/octet-stream';
-        return new webview.WebResourceResponse(mime, 'utf-8', bytes);
+        return attachmentResponse(mime, bytes);
       }
       return blockedResponse();
     }
@@ -371,7 +429,8 @@ struct NoteRead {
       }
 
       // ---- 朗读控制条（S5-2 播控 + S5-4 音色/语速入口；调度在 speech 内核，本页仅按钮与状态） ----
-      if (this.canSpeak()) {
+      // planReady 是 rebuild 触发点（plan 为普通字段）；canSpeak() 复核计划非空
+      if (this.planReady && this.canSpeak()) {
         Column({ space: 4 }) {
           Row({ space: 12 }) {
             if (this.playState === 'playing') {
@@ -451,7 +510,7 @@ struct NoteRead {
             Text('音色')
               .fontSize(13)
               .fontColor('#8C8C8C')
-            ForEach(VOICE_OPTIONS, (voice: { person: number; label: string }) => {
+            ForEach(VOICE_OPTIONS, (voice: VoiceOption) => {
               Text(voice.label)
                 .fontSize(13)
                 .fontColor(this.voicePerson === voice.person
@@ -465,7 +524,7 @@ struct NoteRead {
                     void this.applyVoiceSettings({ person: voice.person });
                   }
                 })
-            }, (voice: { person: number; label: string }) => `voice-${voice.person}`)
+            }, (voice: VoiceOption) => `voice-${voice.person}`)
           }
           .width('100%')
 
@@ -528,7 +587,7 @@ struct NoteRead {
           .onPageEnd(() => {
             this.renderDocument();
           })
-          .onInterceptRequest((event: { request: webview.WebResourceRequest }) => {
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
             return this.interceptRequest(event);
           })
       } else {

@@ -47,9 +47,17 @@ export interface IMarkdownTokenizer {
  * 字段缺失时给缺省值而不是抛错 —— 桥接两侧版本演进时，新增字段被忽略、缺失字段可容忍。
  */
 export function mdTokensFromJson(payload: string): MdToken[] {
-  const parsed: unknown = JSON.parse(payload);
+  let parsed: unknown = JSON.parse(payload);
+  // ArkWeb runJavaScript 异步回调对字符串返回值会再做一次 JSON 编码（外层多一对引号），
+  // 解析结果是 string 即双重编码，需再解一层（真机 HarmonyOS 6.1.1 / 模拟器 7.0.0 实测）。
+  if (typeof parsed === 'string') {
+    parsed = JSON.parse(parsed);
+  }
   if (!Array.isArray(parsed)) {
-    throw new Error('mdTokensFromJson: bridge payload is not an array');
+    // 诊断信息带类型与负载片段，便于定位桥接两侧编码不一致（真机排障用，不含内容明文超过 80 字符）
+    const kind: string = parsed === null ? 'null' : typeof parsed;
+    const snippet: string = payload.length > 80 ? `${payload.slice(0, 80)}…` : payload;
+    throw new Error(`mdTokensFromJson: bridge payload is not an array (type=${kind}, head=${snippet})`);
   }
   return parsed.map((t: unknown) => convertToken(t));
 }

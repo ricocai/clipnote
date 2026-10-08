@@ -24,6 +24,14 @@ export class SystemPasteboardProbe implements ClipboardProbe {
 
   async readText(): Promise<string> {
     const board: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+    // 空剪贴板（或无文本类内容）时，getData 返回的 PasteData 记录数组未初始化，
+    // getPrimaryText 内部对 undefined 取 length 抛 TypeError（G1 真机实测，HarmonyOS 6.1.1）。
+    // 先用非受控探测接口判空（hasDataType 与 hasData 同类，不在受控读取清单内），
+    // 空则返回空串，由上层提示"剪贴板当前没有可保存的文本"。HTML 也是文本来源，一并探测。
+    if (!board.hasDataType(pasteboard.MIMETYPE_TEXT_PLAIN) &&
+        !board.hasDataType(pasteboard.MIMETYPE_TEXT_HTML)) {
+      return '';
+    }
     const data: pasteboard.PasteData = await board.getData();
     return data.getPrimaryText();
   }
