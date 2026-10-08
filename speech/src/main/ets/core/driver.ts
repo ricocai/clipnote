@@ -22,6 +22,14 @@ export interface CreateEngineParams {
 export interface DriverUtterance {
   readonly requestId: number;
   readonly text: string;
+  /**
+   * 播报参数（真机验收 Q2a 定案）：speed/volume/pitch 官方只接受**随每次 speak 的
+   * extraParams 透传**（HarmonyOS 官方 texttospeech-guide 与社区实测一致），
+   * 放在 createEngine 参数里会被静默忽略——倍速不生效的根因。
+   */
+  readonly speed: number;
+  readonly volume: number;
+  readonly pitch: number;
 }
 
 /** 引擎事件监听；requestId 标识样本归属，内核凭代际丢弃过期样本 */

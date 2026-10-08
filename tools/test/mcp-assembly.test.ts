@@ -80,7 +80,7 @@ async function makeFixture(): Promise<Fixture> {
   const search = new SearchRepository({ db });
   const blobs = new BlobRepository({ db, logger });
   const blobCas = new BlobCas('/sandbox', new MemoryFileStore(), hasher, logger, random);
-  const svc = new NoteService({ db, notes, search, blobs, blobCas, hasher, logger });
+  const svc = new NoteService({ db, notes, search, blobs, blobCas, hasher, clock, logger });
   const audit = new McpAuditRepository(db);
   const ca = new FakeCertificateAuthority((s) => crypto.createHash('sha256').update(s).digest('hex'));
   const socket = new MemoryServerSocket(ca.peek());

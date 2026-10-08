@@ -21,7 +21,8 @@ import { AppServices } from '../services/AppServices';
  *     无事件属性、无 iframe/表单/重定向、URL 协议白名单（仅 attachment:// 与
  *     data:image/*）—— 产出与审计事件后才进 Web；
  *  2. 平台开关（下方 Web 组件）：javaScriptAccess(false) 硬断脚本执行、
- *     onlineImageAccess(false) / fileAccess(false) 断外链与文件通道；
+ *     fileAccess(false) 断文件通道（onlineImageAccess 不得关闭，会先于拦截器
+ *     吞掉 attachment:// 请求——真机验收 Q1 根因；远程图由防线 3 CSP 兜底）；
  *  3. CSP（rawfile/htmlview/htmlview.html meta）：script-src 'self'、
  *     img-src attachment: data:、default-src 'none' 断其余一切。
  *
@@ -320,7 +321,9 @@ struct HtmlRead {
         Web({ src: $rawfile('htmlview/htmlview.html'), controller: this.controller })
           .javaScriptAccess(false)
           .fileAccess(false)
-          .onlineImageAccess(false)
+          // 同 NoteRead：不得加 onlineImageAccess(false)——它先于拦截器吞掉
+          // attachment:// 请求（真机验收 Q1 根因，X7 二分实证）；远程图由
+          // htmlview CSP img-src + interceptRequest 对 http(s) 回 404 双兜底
           .domStorageAccess(false)
           .zoomAccess(false)
           .layoutWeight(1)

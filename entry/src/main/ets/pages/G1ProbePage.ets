@@ -2,6 +2,8 @@ import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { G1ProbeEntry, G1ProbeLog } from '../probe/G1ProbeLog';
 import { SCENE, probeClipboardRead, probePasteButtonRead, recordDeviceInfo } from '../probe/G1ProbeScenes';
+import { AppServices } from '../services/AppServices';
+import { Note, NoteService, ImageImportResult } from 'common';
 
 // ---- 临时探针（Q1 排障用，验收后随 G1 设施一并移除）----
 // 1x1 透明 PNG，验证 WebResourceResponse 构造（与 NoteRead.attachmentResponse 同写法）
@@ -15,6 +17,32 @@ const PROBE_PNG: number[] = [
 ];
 const PROBE_HTML: string = 'data:text/html,<html><body><img src="attachment://probe" ' +
   'onload="document.title=\'LOADED\'" onerror="document.title=\'ERROR\'"></body></html>';
+
+/** 与 NoteRead.attachmentResponse 完全相同的构造（setter + 显式 200 + 独立 ArrayBuffer） */
+function probePngResponse(): WebResourceResponse {
+  const bytes: Uint8Array = new Uint8Array(PROBE_PNG);
+  const res: WebResourceResponse = new WebResourceResponse();
+  res.setResponseCode(200);
+  res.setReasonMessage('OK');
+  res.setResponseMimeType('image/png');
+  res.setResponseEncoding('utf-8');
+  const buf: ArrayBuffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buf).set(bytes);
+  res.setResponseData(buf);
+  return res;
+}
+
+/** 对照组：404 构造（与 NoteRead.blockedResponse 同写法） */
+function probe404Response(): WebResourceResponse {
+  const res: WebResourceResponse = new WebResourceResponse();
+  res.setResponseMimeType('text/plain');
+  res.setResponseEncoding('utf-8');
+  res.setResponseCode(404);
+  res.setReasonMessage('Not Found');
+  res.setResponseHeader([]);
+  res.setResponseData(new ArrayBuffer(0));
+  return res;
+}
 
 /**
  * G1 临时探测页（WHY-90，临时设施，G1 验收后随探针模块一并移除）。
@@ -45,16 +73,69 @@ struct G1ProbePage {
     this.logPath = G1ProbeLog.path();
   }
 
-  /** Q1 探针：用与 NoteRead.attachmentResponse 完全相同的构造回 1x1 PNG，img.onload/onerror 写 title */
-  private probeWebResponse(): void {
-    this.webProbeOn = true;
+  /** Q1 探针：serve404=true 走 404 对照（期望 ERROR）；false 走 200 PNG（期望 LOADED） */
+  private webProbeServe404: boolean = false;
+  /** Q1 探针：主 frame 用 rawfile（resource: 域，与阅读页同源）还是 data:（默认） */
+  private webProbeRawfile: boolean = false;
+  /** Q1 探针：是否叠加阅读页全部 Web 开关（场景F 二分用） */
+  private webProbeNoteReadFlags: boolean = false;
+  /** Q1 探针：单开关二分（G=onlineImageAccess、H=fileAccess、其余=''不叠加） */
+  private webProbeSingleFlag: string = '';
+
+  /** Q1 探针：用与 NoteRead 完全相同的构造回 1x1 PNG（或 404 对照），img.onload/onerror 写 title */
+  private probeWebResponse(serve404: boolean, rawfileMain: boolean = false, noteReadFlags: boolean = false, singleFlag: string = ''): void {
+    this.webProbeServe404 = serve404;
+    this.webProbeRawfile = rawfileMain;
+    this.webProbeNoteReadFlags = noteReadFlags;
+    this.webProbeSingleFlag = singleFlag;
+    this.webProbeOn = false;
+    // 先卸载再重挂 Web，强制重新发起请求（同 src 复用组件时不保证重载）
     setTimeout(() => {
-      this.webCtl.runJavaScript('document.title', (err: Error, result: string) => {
-        const ok: boolean = result === '"LOADED"' || result === 'LOADED';
-        G1ProbeLog.record('q1-web-response', ok, `img title=${String(result)} err=${String(err)}`);
-        this.refresh();
+      this.webProbeOn = true;
+      setTimeout(() => {
+        this.webCtl.runJavaScript('document.title', (err: Error, result: string) => {
+          const title: string = String(result);
+          const loaded: boolean = title.includes('LOADED');
+          const errored: boolean = title.includes('ERROR');
+          // 判定口径：200 组必须 LOADED；404 组必须 ERROR——两组合起来才证明
+          // 「attachment:// 请求到达了拦截器」且「响应构造被内核接受」
+          const ok: boolean = serve404 ? errored : loaded;
+          const scene: string = noteReadFlags ? 'q1-web-nrflags' : (singleFlag.length > 0 ? `q1-web-flag-${singleFlag}` : (rawfileMain ? 'q1-web-rawfile' : (serve404 ? 'q1-web-404' : 'q1-web-200')));
+          G1ProbeLog.record(scene, ok,
+            `img title=${title} err=${String(err)} expect=${serve404 ? 'ERROR' : 'LOADED'} main=${rawfileMain ? 'resource' : 'data'} nrFlags=${noteReadFlags}`);
+          this.refresh();
+        });
+      }, 2000);
+    }, 100);
+  }
+
+  /**
+   * Q1 端到端探针：走真实业务链路造一篇带图笔记并打开阅读页——
+   * save → importImage（CAS 落盘 + 引用提交）→ NoteRead 渲染，
+   * 阅读页拦截器 hit/miss 与预载规模全部进 hilog（tag ClipNoteRead）。
+   */
+  private async probeEndToEnd(): Promise<void> {
+    try {
+      const svc: NoteService = await AppServices.get().noteService();
+      const note: Note = await svc.save({
+        title: '探针-图片显示验证',
+        contentMd: '# 探针\n\n下面应显示一个 1x1 像素点（几乎不可见，以 hilog 判定为准）。\n',
       });
-    }, 2000);
+      // importImage 只入附件库、不改正文（调用方责任），必须把返回的引用片段写回笔记，
+      // 否则阅读页无图可渲染——探针就测了个寂寞（本轮实测踩中，已修正）
+      const img: ImageImportResult = await svc.importImage(note.id, new Uint8Array(PROBE_PNG), 'image/png', '探针图');
+      await svc.save({
+        id: note.id,
+        title: note.title,
+        contentMd: note.contentMd + '\n' + img.markdownSnippet + '\n',
+      });
+      G1ProbeLog.record('q1-e2e-create', true, `noteId=${note.id} sha=${img.sha256.slice(0, 12)}，即将打开阅读页`);
+      this.refresh();
+      router.pushUrl({ url: 'pages/NoteRead', params: { 'noteId': note.id } });
+    } catch (err) {
+      G1ProbeLog.record('q1-e2e-create', false, `造数失败：${String(err)}`);
+      this.refresh();
+    }
   }
 
   build() {
@@ -100,28 +181,104 @@ struct G1ProbePage {
         .fontColor('#8C8C8C')
         .width('100%')
 
-      Button('场景C（Q1 临时）：WebResourceResponse 图片响应构造')
+      Button('场景C1（Q1）：attachment:// 200 PNG（期望 LOADED）')
         .width('100%')
         .onClick(() => {
-          this.probeWebResponse();
+          this.probeWebResponse(false);
         })
 
-      if (this.webProbeOn) {
-        Web({ src: PROBE_HTML, controller: this.webCtl })
+      Button('场景C2（Q1 对照）：attachment:// 404（期望 ERROR）')
+        .width('100%')
+        .onClick(() => {
+          this.probeWebResponse(true);
+        })
+
+      Button('场景D（Q1 端到端）：造带图笔记并打开阅读页（看 hilog）')
+        .width('100%')
+        .onClick(() => {
+          this.probeEndToEnd();
+        })
+
+      Button('场景E（Q1 决定性）：rawfile 主 frame + attachment 图（期望 LOADED）')
+        .width('100%')
+        .onClick(() => {
+          this.probeWebResponse(false, true);
+        })
+
+      Button('场景F（Q1 二分）：rawfile + 阅读页全部 Web 开关（期望定位元凶）')
+        .width('100%')
+        .onClick(() => {
+          this.probeWebResponse(false, true, true);
+        })
+
+      Button('场景G（Q1 单开关）：rawfile + 仅 onlineImageAccess(false)')
+        .width('100%')
+        .onClick(() => {
+          this.probeWebResponse(false, true, false, 'oia');
+        })
+
+      Button('场景H（Q1 单开关）：rawfile + 仅 fileAccess(false)')
+        .width('100%')
+        .onClick(() => {
+          this.probeWebResponse(false, true, false, 'fa');
+        })
+
+      if (this.webProbeOn && this.webProbeNoteReadFlags) {
+        Web({ src: $rawfile('reader/probe-scheme.html'), controller: this.webCtl })
+          .width('100%')
+          .height(60)
+          // 场景F：与 NoteRead 完全同参（javaScriptAccess/fileAccess/onlineImageAccess/
+          // domStorageAccess/zoomAccess），逐个对回即定位阻断 attachment:// 的开关
+          .javaScriptAccess(true)
+          .fileAccess(false)
+          .onlineImageAccess(false)
+          .domStorageAccess(false)
+          .zoomAccess(false)
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
+            const url: string = event.request.getRequestUrl();
+            if (url.startsWith('attachment://')) {
+              return this.webProbeServe404 ? probe404Response() : probePngResponse();
+            }
+            return undefined;
+          })
+      }
+
+      if (this.webProbeOn && !this.webProbeNoteReadFlags && this.webProbeSingleFlag === 'oia') {
+        Web({ src: $rawfile('reader/probe-scheme.html'), controller: this.webCtl })
+          .width('100%')
+          .height(60)
+          .onlineImageAccess(false)
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
+            const url: string = event.request.getRequestUrl();
+            if (url.startsWith('attachment://')) {
+              return this.webProbeServe404 ? probe404Response() : probePngResponse();
+            }
+            return undefined;
+          })
+      }
+
+      if (this.webProbeOn && !this.webProbeNoteReadFlags && this.webProbeSingleFlag === 'fa') {
+        Web({ src: $rawfile('reader/probe-scheme.html'), controller: this.webCtl })
+          .width('100%')
+          .height(60)
+          .fileAccess(false)
+          .onInterceptRequest((event: OnInterceptRequestEvent) => {
+            const url: string = event.request.getRequestUrl();
+            if (url.startsWith('attachment://')) {
+              return this.webProbeServe404 ? probe404Response() : probePngResponse();
+            }
+            return undefined;
+          })
+      }
+
+      if (this.webProbeOn && !this.webProbeNoteReadFlags && this.webProbeSingleFlag === '') {
+        Web({ src: this.webProbeRawfile ? $rawfile('reader/probe-scheme.html') : PROBE_HTML, controller: this.webCtl })
           .width('100%')
           .height(60)
           .onInterceptRequest((event: OnInterceptRequestEvent) => {
             const url: string = event.request.getRequestUrl();
             if (url.startsWith('attachment://')) {
-              // 对照实验（临时）：blockedResponse 构造（404 + 空体），img.onerror 应触发
-              const res: WebResourceResponse = new WebResourceResponse();
-              res.setResponseMimeType('text/plain');
-              res.setResponseEncoding('utf-8');
-              res.setResponseCode(404);
-              res.setReasonMessage('Not Found');
-              res.setResponseHeader([]);
-              res.setResponseData(new ArrayBuffer(0));
-              return res;
+              return this.webProbeServe404 ? probe404Response() : probePngResponse();
             }
             return undefined;
           })

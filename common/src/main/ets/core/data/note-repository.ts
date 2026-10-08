@@ -268,6 +268,20 @@ export class NoteRepository {
     return notes[0];
   }
 
+  /**
+   * 持久化去重查询（真机验收 Q4）：取时间窗内创建的未删除笔记（按创建时间升序）。
+   * 窗口（默认 2 日）内笔记规模天然有界，LIMIT 仅作兜底；调用方在内存中
+   * 做内容比对/分组（保存去重与周期清理共用）。
+   */
+  async listCreatedSince(sinceMs: number, limit: number): Promise<Note[]> {
+    return this.queryNotes(
+      `SELECT ${NOTE_COLUMNS} FROM note
+       WHERE deleted_at IS NULL AND created_at >= ?
+       ORDER BY created_at ASC LIMIT ?`,
+      [sinceMs, limit],
+    );
+  }
+
   /** 回收站列表（搜索结果与备份快照须排除 —— 调用方责任） */
   async listDeleted(limit: number, offset?: number): Promise<Note[]> {
     return this.queryNotes(

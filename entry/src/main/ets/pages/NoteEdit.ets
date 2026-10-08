@@ -170,19 +170,13 @@ struct NoteEdit {
       this.notice = '没有需要保存的改动。';
       return;
     }
-    // 真机验收 Q3：新建笔记保存后直接回到列表（列表按更新时间倒序，新笔记在最上面）；
-    // 新建入口只在列表页（NoteList.ets 新建按钮），router.back() 即落在刷新的列表上。
-    // 编辑既有笔记保持原位提示，不改变既有行为。
-    const isNew: boolean = this.noteId.length === 0;
+    // 真机验收 Q3：保存成功（新建与编辑）一律返回列表——列表按更新时间倒序，
+    // 本次保存的笔记在最上面。编辑页入口只来自列表页/阅读页，back 落点必然合理。
     this.busy = true;
     const ok: boolean = await this.saveOnce();
     this.busy = false;
     if (ok) {
-      if (isNew) {
-        router.back();
-        return;
-      }
-      this.notice = '已保存。';
+      router.back();
     }
   }
 

@@ -20,7 +20,20 @@
     var blocks = JSON.parse(blocksJson);
     var source = sourceJson === undefined ? '' : JSON.parse(sourceJson);
     var html = window.__clipnoteReader.buildReaderHtml(blocks, source);
-    document.getElementById('root').innerHTML = html;
+    var rootEl = document.getElementById('root');
+    rootEl.innerHTML = html;
+    // 段落双击 = 从该段开始朗读（真机验收 Q2b）：事件委托在 #root 上，
+    // innerHTML 重绘不影响监听；块下标经 data-cl-i 锚点取回，交给 ArkTS 侧代理
+    rootEl.ondblclick = function (ev) {
+      var target = ev.target;
+      var el = target && target.closest ? target.closest('[data-cl-i]') : null;
+      if (el === null && target && target.getAttribute && target.getAttribute('data-cl-i') !== null) {
+        el = target;
+      }
+      if (el && window.clipnoteBridge && typeof window.clipnoteBridge.onBlockDoubleTap === 'function') {
+        window.clipnoteBridge.onBlockDoubleTap(Number(el.getAttribute('data-cl-i')));
+      }
+    };
     var t1 = performance.now();
     // 真机性能口径（长文首屏/渲染耗时直接可读；滚动流畅度仍需真机 FPS 实测）
     window.__clipnotePerf = {

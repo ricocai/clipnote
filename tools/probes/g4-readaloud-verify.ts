@@ -21,6 +21,7 @@
 import assert from 'node:assert/strict';
 import { BlockType, DocumentBlock } from '../../common/src/main/ets/core/model';
 import { FakeTtsDriver } from '../../speech/src/main/ets/core/testing';
+import { DriverUtterance } from '../../speech/src/main/ets/core/driver';
 import { SystemTtsEngine } from '../../speech/src/main/ets/core/engine';
 import { planSpeech, SpeechPlan, SpeechPlanItem } from '../../speech/src/main/ets/core/planner';
 import {
@@ -32,7 +33,7 @@ import {
 // ---- 台架 ----
 
 class TimedDriver extends FakeTtsDriver {
-  override async speak(utterance: { requestId: number; text: string }): Promise<void> {
+  override async speak(utterance: DriverUtterance): Promise<void> {
     await super.speak(utterance);
     setTimeout(() => this.simulateStart(utterance.requestId), 0);
     setTimeout(() => this.simulateComplete(utterance.requestId), 0);

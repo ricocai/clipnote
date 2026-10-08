@@ -278,3 +278,28 @@ test('设置：音色变更在 idle 时废弃旧引擎，下次 speak 用新参�
   driver.simulateComplete(driver.spoken[0].requestId);
   await done;
 });
+
+test('Q2a：播报参数随每次 speak 透传，倍速以用户设置为准（控制器缺省 1 不参与）', async () => {
+  const driver = new FakeTtsDriver();
+  const engine = new SystemTtsEngine(driver);
+  await engine.init();
+  await engine.updateSettings({ speed: 1.5 });
+
+  // 控制器侧恒传缺省 speed=1（SpeechPlaybackOptions 未配速时）；实际播报必须取设置值 1.5
+  const done = engine.speak({ segment: seg('倍速验证。'), generation: 1, speed: 1 }, noopCallbacks());
+  await tick();
+  assert.equal(driver.spoken.length, 1);
+  assert.equal(driver.spoken[0].speed, 1.5);
+  assert.equal(driver.spoken[0].volume, 1);
+  assert.equal(driver.spoken[0].pitch, 1);
+  driver.simulateComplete(driver.spoken[0].requestId);
+  await done;
+
+  // 段间换倍速：下一段立即用新值（段落边界生效语义，无需重建引擎）
+  await engine.updateSettings({ speed: 0.75 });
+  const done2 = engine.speak({ segment: seg('第二段。'), generation: 2, speed: 1 }, noopCallbacks());
+  await tick();
+  assert.equal(driver.spoken[1].speed, 0.75);
+  driver.simulateComplete(driver.spoken[1].requestId);
+  await done2;
+});

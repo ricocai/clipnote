@@ -24,15 +24,13 @@ export class SystemTtsDriver implements TtsEngineDriver {
 
   create(params: CreateEngineParams): Promise<void> {
     return new Promise<void>((resolve: () => void, reject: (err: Error) => void): void => {
-      const extraParams: Record<string, Object> = {};
-      extraParams['speed'] = params.speed;
-      extraParams['volume'] = params.volume;
-      extraParams['pitch'] = params.pitch;
+      // speed/volume/pitch 不在此处透传：SDK 的 CreateEngineParams.extraParams 不接受
+      // 这些键（官方 texttospeech-guide：它们属于 speak 的 extraParams），放了会被静默
+      // 忽略（真机验收 Q2a 倍速不生效的根因）。播报参数见 speak()。
       const ttsParams: textToSpeech.CreateEngineParams = {
         language: params.language,
         person: params.person,
         online: 1,
-        extraParams: extraParams,
       };
       textToSpeech.createEngine(
         ttsParams,
@@ -66,8 +64,17 @@ export class SystemTtsDriver implements TtsEngineDriver {
 
   async speak(utterance: DriverUtterance): Promise<void> {
     const engine: textToSpeech.TextToSpeechEngine = this.requireEngine();
-    // 引擎直接播报：playType=1 沿用原口径（extraParams 透传，SDK 未列此键，真机核对项）
+    // 官方 texttospeech-guide 口径（社区三源一致）：播报参数随每次 speak 的
+    // extraParams 透传，段级生效——这正是「换倍速按段落边界生效」的实现载体（Q2a）。
     const extraParams: Record<string, Object> = {};
+    extraParams['queueMode'] = 0;
+    extraParams['speed'] = utterance.speed;
+    extraParams['volume'] = utterance.volume;
+    extraParams['pitch'] = utterance.pitch;
+    extraParams['languageContext'] = 'zh-CN';
+    extraParams['audioType'] = 'pcm';
+    extraParams['soundChannel'] = 3;
+    // 引擎直接播报：playType=1（无 PCM 流出，进度按段粒度上报）
     extraParams['playType'] = 1;
     const speakParams: textToSpeech.SpeakParams = {
       requestId: String(utterance.requestId),

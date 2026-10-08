@@ -195,7 +195,16 @@ export class SystemTtsEngine implements ITtsEngine {
             completion.resolve();
             return;
           }
-          this.driver.speak({ requestId, text: request.segment.text }).catch((err: Error) => {
+          // 播报参数以「当前用户设置」为准（Q2a）：settings 是倍速的唯一权威来源，
+          // 每段 speak 时读取——换倍速恰好按段落边界生效（S5-1 语义），无需重建引擎。
+          // request.speed 是控制器缺省值（恒 1），不参与实际播报。
+          this.driver.speak({
+            requestId,
+            text: request.segment.text,
+            speed: this.settings.speed,
+            volume: 1,
+            pitch: 1,
+          }).catch((err: Error) => {
             // 引擎连请求都未接受：本地结算，等 listener 只会更糟
             if (this.pending.delete(requestId)) {
               this.active = undefined;

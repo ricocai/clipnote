@@ -18,6 +18,7 @@ export * from './src/main/ets/core/clip';
 export * from './src/main/ets/core/inbox';
 export * from './src/main/ets/core/share';
 export * from './src/main/ets/core/notes';
+export * from './src/main/ets/core/note-dedupe';
 export * from './src/main/ets/core/foreground';
 export * from './src/main/ets/core/markdown';
 export * from './src/main/ets/core/htmlsafe';

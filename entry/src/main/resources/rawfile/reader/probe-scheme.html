@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <!-- 临时探针（真机验收 Q1 排障，验收后随 G1 设施一并移除）：
+       与 reader.html 同目录同域（resource://rawfile/reader/），静态 img 引用
+       attachment://probe，onload/onerror 写 document.title，用于判定
+       「resource: 主 frame 下 attachment: 子资源能否到达 onInterceptRequest」。 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'unsafe-inline'; img-src attachment: data:; style-src 'unsafe-inline'">
+  <title>PROBE_INIT</title>
+</head>
+<body>
+  <img src="attachment://probe"
+       onload="document.title='PROBE_LOADED'"
+       onerror="document.title='PROBE_ERROR'">
+</body>
+</html>

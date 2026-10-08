@@ -12,6 +12,8 @@ import { McpAuditRepository } from '../core/data/mcp-audit-repository';
 import { ExportRecordRepository } from '../core/data/export-record-repository';
 import { ExportService } from '../core/export-service';
 import { StartupRecoveryReport, runStartupRecovery } from '../core/data/recovery';
+import { NoteDedupeReport, NoteDedupeService } from '../core/note-dedupe';
+import { PERSISTED_DEDUPE_WINDOW_MS } from '../core/model';
 import { RelationalStoreExecutor } from './relational-store';
 import { SandboxFileStore } from './file-store';
 
@@ -41,6 +43,7 @@ export class AppDataRuntime {
 
   private backupService: BackupService | undefined = undefined;
   private exportService: ExportService | undefined = undefined;
+  private dedupeService: NoteDedupeService | undefined = undefined;
 
   private readonly filesDir: string;
   private readonly clock: IClock;
@@ -93,6 +96,21 @@ export class AppDataRuntime {
       });
     }
     return this.backupService;
+  }
+
+  /**
+   * 笔记周期去重（真机验收 Q4）：启动必跑一次（force），回前台 6h 节流再跑。
+   * 只收敛近 2 日内创建的重复（留最早/置顶件，其余软删可恢复），返回本次报告。
+   */
+  async runNoteDedupe(force: boolean = false): Promise<NoteDedupeReport> {
+    if (this.dedupeService === undefined) {
+      this.dedupeService = new NoteDedupeService({
+        notes: this.notes,
+        clock: this.clock,
+        logger: this.logger,
+      });
+    }
+    return this.dedupeService.run(PERSISTED_DEDUPE_WINDOW_MS, force);
   }
 
   /** 可读导出服务（S4-2）：懒装配；产物与备份分目录（exports/ vs backups/），导出 ≠ 备份 */
@@ -174,6 +192,12 @@ export class AppDataRuntime {
       logger.log(LogLevel.INFO, 'inbox_purge_expired_at_startup', { count: purged });
     }
     AppDataRuntime.instance = runtime;
+    // 笔记周期去重（Q4）：启动必跑一次（存量收敛），失败不阻断启动
+    try {
+      await runtime.runNoteDedupe(true);
+    } catch (err) {
+      logger.log(LogLevel.WARN, 'note_dedupe_startup_failed', { error: String(err) });
+    }
     return runtime;
   }
 }

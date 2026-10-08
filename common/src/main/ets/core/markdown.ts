@@ -118,7 +118,9 @@ function rangeOf(lineStarts: readonly number[], map: number[] | null, totalLengt
 /** 从图片 src 解析附件摘要；非附件引用（外链、远程图片）返回 undefined */
 export function attachmentRefOf(src: string): string | undefined {
   if (src.startsWith(ATTACHMENT_SCHEME)) {
-    const sha: string = src.slice(ATTACHMENT_SCHEME.length).split('?')[0];
+    // standard 协议注册后 URL 会被内核归一化（无路径的 host 形式可能补尾斜杠），
+    // 先剥掉尾斜杠再校验（真机验收 Q1：attachment://<sha>/ 与 attachment://<sha> 同义）
+    const sha: string = src.slice(ATTACHMENT_SCHEME.length).split('?')[0].split('#')[0].replace(/\/+$/, '');
     return isSha256Hex(sha) ? sha : undefined;
   }
   const slash: number = src.lastIndexOf('/');

@@ -51,7 +51,7 @@ async function makeFixture(): Promise<Fixture> {
   const search = new SearchRepository({ db });
   const blobs = new BlobRepository({ db, logger });
   const blobCas = new BlobCas('/sandbox', fs, hasher, logger, rand);
-  const svc = new NoteService({ db, notes, search, blobs, blobCas, hasher, logger });
+  const svc = new NoteService({ db, notes, search, blobs, blobCas, hasher, clock, logger });
   return { db, clock, fs, notes, blobs, svc, logger };
 }
 
@@ -251,4 +251,49 @@ test('importImage：超大字节（>32MB 分享同一口径）在入 CAS 之前�
   );
   assert.equal(f.fs.allPaths().length, 0, '超限字节不得落盘');
   assert.deepEqual(await f.svc.listAttachmentsOf(note.id), [], '不得留下附件引用');
+});
+
+// ---------------------------------------------------------------------------
+// 真机验收 Q4：保存去重（最近 2 日内正文完全相同的活体笔记幂等返回，不新建）
+// ---------------------------------------------------------------------------
+
+test('Q4 保存去重：2 日窗口内同正文新建 → 幂等返回既有笔记，不产生第二条', async () => {
+  const f = await makeFixture();
+  const first = await f.svc.save({ title: '', contentMd: '节后第一天晨读' });
+  f.clock.advance(4000);
+  const again = await f.svc.save({ title: '', contentMd: '节后第一天晨读' });
+  assert.equal(again.id, first.id); // 返回既有笔记
+  assert.equal((await f.notes.listRecent(10)).length, 1); // 库里仍只有一篇
+  assert.ok(f.logger.has('note_save_deduped'));
+  assert.ok(!f.logger.has('note_created') || f.logger.has('note_save_deduped'));
+});
+
+test('Q4 保存去重：正文不同（含空白差异）与窗口外（>2 日）都正常新建', async () => {
+  const f = await makeFixture();
+  await f.svc.save({ title: '', contentMd: '同一份内容' });
+  // 空白差异即视为不同内容（口径可预期、可解释）
+  const different = await f.svc.save({ title: '', contentMd: '同一份内容 ' });
+  const listed1 = await f.notes.listRecent(10);
+  assert.equal(listed1.length, 2);
+  assert.notEqual(different.title, '');
+
+  // 窗口外：3 天前的同正文不再参与去重
+  f.clock.advance(3 * 24 * 60 * 60 * 1000);
+  const after = await f.svc.save({ title: '', contentMd: '同一份内容' });
+  const listed2 = await f.notes.listRecent(10);
+  assert.equal(listed2.length, 3);
+  assert.ok(after.id.length > 0);
+});
+
+test('Q4 保存去重：回收站中的笔记不参与；编辑（有 id）路径不去重', async () => {
+  const f = await makeFixture();
+  const first = await f.svc.save({ title: '', contentMd: '将被删除的重复内容' });
+  await f.svc.moveToTrash(first.id);
+  const second = await f.svc.save({ title: '', contentMd: '将被删除的重复内容' });
+  assert.notEqual(second.id, first.id); // 已删不挡新建
+
+  // 编辑路径（有 id）保持原语义：更新既有笔记，不触发去重
+  const edited = await f.svc.save({ id: second.id, title: '改名', contentMd: '将被删除的重复内容' });
+  assert.equal(edited.id, second.id);
+  assert.equal(edited.revision, 2);
 });

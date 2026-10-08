@@ -10,6 +10,7 @@ import {
 import { MarkdownItTokenizer } from './support/platform';
 import { SpeechSegment } from '../../common/src/main/ets/core/speech';
 import { FakeTtsDriver } from '../../speech/src/main/ets/core/testing';
+import { DriverUtterance } from '../../speech/src/main/ets/core/driver';
 import { SystemTtsEngine } from '../../speech/src/main/ets/core/engine';
 import { SegmentQueue } from '../../speech/src/main/ets/core/queue';
 import { planSpeech, SpeechPlan, SpeechPlanItem } from '../../speech/src/main/ets/core/planner';
@@ -23,7 +24,7 @@ import {
 
 /** speak 后自动播完的驱动（自动完成路径：顺序播完/背压窗口断言用） */
 class AutoDriver extends FakeTtsDriver {
-  override async speak(utterance: { requestId: number; text: string }): Promise<void> {
+  override async speak(utterance: DriverUtterance): Promise<void> {
     await super.speak(utterance);
     // FakeTtsDriver 不主动回调（由测试显式推进）；自动完成路径在入队后自行调度
     setTimeout(() => this.simulateComplete(utterance.requestId), 0);

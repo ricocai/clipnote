@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import {
   AppContextHolder,
   AppDataRuntime,
@@ -21,6 +22,28 @@ const TAG: string = 'ClipNote';
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+    // 真机验收 Q1 根因修复：把 attachment:// 注册为「本地+标准」自定义协议。
+    // 阅读页 Web 设了 onlineImageAccess(false)（G6 禁远程图），该开关在到达
+    // onInterceptRequest 之前就把未知协议的图片请求掐掉——表现为图片不显示且拦截器
+    // 无任何命中（X7 模拟器实证：data: 页面探针能到拦截器，resource:// 阅读页到不了）。
+    // 注册为 isLocal（按 file 规则）后请求可穿透该开关到达拦截器，由拦截器按白名单回包；
+    // http(s) 远程图仍被 onlineImageAccess(false) + 拦截器双重封禁，G6 口径不变。
+    // 必须在 Web 内核初始化之前调用（onCreate 是最早时机）；失败只记日志不影响启动。
+    try {
+      const schemes: Array<webview.WebCustomScheme> = [
+        {
+          schemeName: 'attachment',
+          isSupportCORS: false,
+          isSupportFetch: false,
+          isStandard: true,
+          isLocal: true,
+        },
+      ];
+      webview.WebviewController.customizeSchemes(schemes);
+      hilog.info(DOMAIN, TAG, '%{public}s', 'attachment scheme registered');
+    } catch (err) {
+      hilog.error(DOMAIN, TAG, 'customizeSchemes failed: %{public}s', String(err));
+    }
     // 领域内核不依赖 AbilityKit：沙箱根路径在这里一次性交给适配层
     AppContextHolder.set(this.context);
     // 数据层接线（设计 §4.2）：打开库 → 迁移 → 启动恢复扫描。
@@ -98,6 +121,12 @@ export default class EntryAbility extends UIAbility {
     AppServices.get().mcpService().enterForeground().catch((err: Error) => {
       hilog.error(DOMAIN, TAG, 'mcp enterForeground failed: %{public}s', String(err));
     });
+    // Q4：笔记周期去重（6h 节流；启动那次在 AppDataRuntime.doInit 已 force 跑过）
+    if (AppDataRuntime.isReady()) {
+      AppDataRuntime.current().runNoteDedupe(false).catch((err: Error) => {
+        hilog.error(DOMAIN, TAG, 'note dedupe failed: %{public}s', String(err));
+      });
+    }
     // ===== G1 PROBE BEGIN（WHY-90 临时设施）=====
     // 注意：这是一次"故意违反上面产品口径"的探测 —— 验证无手势时机下系统是否放行读取、
     // 默认授权策略下是否弹窗。探针块随 G1 验收移除后，恢复上方注释所述行为。

@@ -12,8 +12,8 @@
  * 引用格式：`attachment://<sha256>`（markdown.ts 的单一协议，渲染/导出共用）。
  */
 
-import { AttachmentRole, BlobRecord, BlobSha256, BlobStatus, Note, NoteAttachment, NoteId, NoteSource, Tag } from './model';
-import { IHasher, ILogger, LogLevel } from './ports';
+import { AttachmentRole, BlobRecord, BlobSha256, BlobStatus, Note, NoteAttachment, NoteId, NoteSource, PERSISTED_DEDUPE_WINDOW_MS, Tag } from './model';
+import { IClock, IHasher, ILogger, LogLevel } from './ports';
 import { BlobCas } from './blob-cas';
 import { IRdbExecutor, transact } from './data/rdb';
 import { NoteRepository } from './data/note-repository';
@@ -24,6 +24,9 @@ import { ATTACHMENT_SCHEME } from './markdown';
 
 /** 列表页单次加载上限（设计 §8 性能口径：不一次载入全库，分页由 LIMIT 约束） */
 export const NOTE_LIST_LIMIT: number = 200;
+
+/** 保存去重窗口扫描上限（Q4）：2 日窗口内笔记数的宽松上限，超出部分不参与当次比对 */
+export const NOTE_DEDUPE_SCAN_LIMIT: number = 500;
 
 /** 单篇笔记的图片附件数量上限（防误粘贴刷屏；超限给出明确提示而不是静默丢弃） */
 export const MAX_IMAGE_ATTACHMENTS_PER_NOTE: number = 50;
@@ -42,6 +45,7 @@ export interface NoteServiceDeps {
   readonly blobs: BlobRepository;
   readonly blobCas: BlobCas;
   readonly hasher: IHasher;
+  readonly clock: IClock;
   readonly logger: ILogger;
 }
 
@@ -66,11 +70,23 @@ export class NoteService {
   /**
    * 保存：无 id 新建（标题为空时取首行作标题，全空给兜底名），
    * 有 id 则一次更新标题 + 正文（revision 只 + 1，见 NoteRepository.update）。
+   *
+   * 真机验收 Q4（保存去重）：新建时若最近 2 日（PERSISTED_DEDUPE_WINDOW_MS）内已存在
+   * **正文完全相同**的活体笔记，幂等返回该笔记而不新建——重复输入/重复保存不产生第二条。
+   * 比对口径为正文精确相等（可预期、可解释；空白差异即视为不同内容）。
+   * 编辑既有笔记（有 id）不参与去重。
    */
   async save(input: NoteSaveInput): Promise<Note> {
     const trimmed: string = input.title.trim();
     const title: string = trimmed.length > 0 ? trimmed : deriveTitle(input.contentMd);
     if (input.id === undefined) {
+      const dup: Note | undefined = await this.findRecentDuplicate(input.contentMd);
+      if (dup !== undefined) {
+        this.deps.logger.log(LogLevel.INFO, 'note_save_deduped', {
+          existingId: dup.id, windowDays: 2,
+        });
+        return dup;
+      }
       const note: Note = await this.deps.notes.create({
         title,
         contentMd: input.contentMd,
@@ -82,6 +98,18 @@ export class NoteService {
     const note: Note = await this.deps.notes.update(input.id, title, input.contentMd);
     this.deps.logger.log(LogLevel.INFO, 'note_saved', { id: note.id, revision: note.revision });
     return note;
+  }
+
+  /** Q4 保存去重：2 日窗口内按正文精确相等找活体重复（含收件箱转存的笔记） */
+  private async findRecentDuplicate(contentMd: string): Promise<Note | undefined> {
+    const sinceMs: number = this.deps.clock.nowMs() - PERSISTED_DEDUPE_WINDOW_MS;
+    const recent: Note[] = await this.deps.notes.listCreatedSince(sinceMs, NOTE_DEDUPE_SCAN_LIMIT);
+    for (let i: number = 0; i < recent.length; i++) {
+      if (recent[i].contentMd === contentMd) {
+        return recent[i];
+      }
+    }
+    return undefined;
   }
 
   /** 置顶（收藏）；收藏 = 置顶，同一 pinned 字段（模型无独立收藏列，首期口径） */

@@ -1,5 +1,6 @@
 import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import {
   ATTACHMENT_SCHEME,
@@ -92,6 +93,22 @@ interface VoiceOption {
   readonly label: string;
 }
 
+/**
+ * 阅读页 JS→ArkTS 桥（Q2b 段落双击起读）：经 javaScriptProxy 注入为
+ * window.clipnoteBridge；bridge.js 的 dblclick 委托回调把 data-cl-i 块下标传回。
+ */
+class ReaderJsBridge {
+  private readonly doubleTapHandler: (blockIndex: number) => void;
+
+  constructor(doubleTapHandler: (blockIndex: number) => void) {
+    this.doubleTapHandler = doubleTapHandler;
+  }
+
+  onBlockDoubleTap(blockIndex: number): void {
+    this.doubleTapHandler(blockIndex);
+  }
+}
+
 /** 可选音色：官方口径仅 person=0（聆小珊）确认（G4 探测 E2/E6），多音色枚举属 TTS-2 真机项 */
 const VOICE_OPTIONS: VoiceOption[] = [{ person: 0, label: '聆小珊' }];
 
@@ -132,6 +149,41 @@ struct NoteRead {
   @State ttsUnavailableReason: string = '';
   @State voicePerson: number = DEFAULT_TTS_SETTINGS.person;
   @State voiceSpeed: number = DEFAULT_TTS_SETTINGS.speed;
+
+  /** Q2b：段落双击起读的 JS→ArkTS 桥（javaScriptProxy 注入 window.clipnoteBridge） */
+  private readonly readerBridge: ReaderJsBridge = new ReaderJsBridge((blockIndex: number): void => {
+    this.onBlockDoubleTap(blockIndex);
+  });
+
+  /**
+   * 段落双击 = 从该段开始朗读（Q2b）：块下标 → 覆盖该块的第一个朗读项
+   * （长段落被 ≤300 字切成多段时从首段起），seek 后确保进入播放态。
+   * 引擎不可用/无计划时静默忽略（控制条已置灰提示，双击不另起提示）。
+   */
+  private onBlockDoubleTap(blockIndex: number): void {
+    if (!this.ttsAvailable || this.plan === undefined || this.plan.items.length === 0) {
+      return;
+    }
+    const items: readonly SpeechPlanItem[] = this.plan.items;
+    let target: number = -1;
+    for (let i: number = 0; i < items.length; i++) {
+      if (items[i].blockIndex === blockIndex) {
+        target = i;
+        break;
+      }
+      if (items[i].blockIndex > blockIndex) {
+        break; // 计划按块序排列，越过即不存在（如图片/分割线块无朗读项）
+      }
+    }
+    if (target < 0) {
+      return;
+    }
+    this.speechNotice = '';
+    const ctl: SpeechPlaybackController = this.ensurePlayback();
+    void ctl.seekToSegment(target).then((): void => {
+      void ctl.play();
+    });
+  }
 
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, string> | undefined;
@@ -289,13 +341,25 @@ struct NoteRead {
       this.markdown = note.contentMd;
       this.revision = note.revision;
       // 预载本篇授权附件（字节 + MIME），拦截器同步查表；G6 不接受网页传入任意路径
+      // 单个附件缺失（如 blob 文件丢失）不拖垮整篇：如实记日志、跳过该附件，
+      // 其余内容照常渲染；缺失图片在拦截层走 MISS → 404 占位，hilog 留证。
       const images = await svc.listRenderableImages(this.noteId);
+      let preloaded: number = 0;
       for (let i: number = 0; i < images.length; i++) {
         const img = images[i];
-        const bytes: Uint8Array = await this.svc.readAttachmentBytes(img.sha256);
-        this.attachmentBytes.set(img.sha256, bytes);
-        this.attachmentMime.set(img.sha256, img.mime);
+        try {
+          const bytes: Uint8Array = await this.svc.readAttachmentBytes(img.sha256);
+          this.attachmentBytes.set(img.sha256, bytes);
+          this.attachmentMime.set(img.sha256, img.mime);
+          preloaded++;
+        } catch (imgErr) {
+          hilog.error(0xF1C1, 'ClipNoteRead', 'attachment preload failed sha=%{public}s err=%{public}s',
+            img.sha256, String(imgErr));
+        }
       }
+      // Q1 验收期诊断：预载规模留证（images 与 preloaded 不一致即有附件没读出来）
+      hilog.info(0xF1C1, 'ClipNoteRead', 'note loaded id=%{public}s images=%{public}d preloaded=%{public}d',
+        this.noteId, images.length, preloaded);
       this.ready = true;
       // Web 组件在 ready 后才进 build()，页面加载完成后 onPageEnd 驱动渲染
     } catch (err) {
@@ -379,8 +443,14 @@ struct NoteRead {
       if (sha !== undefined && this.attachmentBytes.has(sha)) {
         const bytes: Uint8Array = this.attachmentBytes.get(sha) as Uint8Array;
         const mime: string = this.attachmentMime.has(sha) ? (this.attachmentMime.get(sha) as string) : 'application/octet-stream';
+        // Q1 验收期诊断（随 G1 探针一并移除）：拦截命中即留证，真机/模拟器可对 hilog
+        hilog.info(0xF1C1, 'ClipNoteRead', 'attachment hit sha=%{public}s len=%{public}d mime=%{public}s',
+          sha.slice(0, 12), bytes.byteLength, mime);
         return attachmentResponse(mime, bytes);
       }
+      // 未命中（sha 非法或附件未预载）是图片不显示的最大嫌疑路径，必须留证
+      hilog.error(0xF1C1, 'ClipNoteRead', 'attachment MISS url=%{public}s sha=%{public}s preloaded=%{public}d',
+        url, sha === undefined ? 'illegal' : sha.slice(0, 12), this.attachmentBytes.size);
       return blockedResponse();
     }
     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -551,6 +621,11 @@ struct NoteRead {
           }
           .width('100%')
 
+          Text('双击正文段落可从该段开始朗读')
+            .fontSize(11)
+            .fontColor('#8C8C8C')
+            .width('100%')
+
           if (!this.ttsAvailable) {
             Text(this.ttsUnavailableReason.length > 0
               ? `朗读不可用：${this.ttsUnavailableReason}`
@@ -579,9 +654,20 @@ struct NoteRead {
         Web({ src: $rawfile('reader/reader.html'), controller: this.controller })
           .javaScriptAccess(true)
           .fileAccess(false)
-          .onlineImageAccess(false)
+          // 不得加 onlineImageAccess(false)：它会在到达 onInterceptRequest 之前吞掉
+          // attachment:// 图片请求（不触发 onload/onerror、拦截器零命中）——真机验收
+          // Q1「图片不显示」的根因（X7 模拟器场景E/F/G/H 二分实证，非权限问题）。
+          // G6 禁远程图由两层兜底，不依赖该开关：
+          //   ① reader.html CSP img-src attachment: data:（http(s) 图根本不发请求）
+          //   ② interceptRequest 对 http(s) 一律 blockedResponse
           .domStorageAccess(false)
           .zoomAccess(false)
+          .javaScriptProxy({
+            object: this.readerBridge,
+            name: 'clipnoteBridge',
+            methodList: ['onBlockDoubleTap'],
+            controller: this.controller,
+          })
           .layoutWeight(1)
           .width('100%')
           .onPageEnd(() => {

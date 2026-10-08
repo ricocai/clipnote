@@ -100,6 +100,7 @@ export class AppServices {
         blobs: rt.blobs,
         blobCas: rt.blobCas,
         hasher: this.hasher,
+        clock: this.clock,
         logger: this.logger,
       });
     }
