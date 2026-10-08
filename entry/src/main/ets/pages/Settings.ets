@@ -412,7 +412,15 @@ struct Settings {
     await this.refreshMcp();
   }
 
+  /**
+   * 整页可滚动（真机回归修复）：此前 build 根组件是 Column 且没有 Scroll，
+   * 超出一屏的分区（笔记本管理 / 导出 / 备份 / MCP / 垃圾桶 / 审计）永远滑不到
+   * —— 用户口径就是"设置里没有笔记本 CRUD"（功能一直存在，只是够不着）。
+   * 注意：外层 Scroll 定高，内层 Column 不要再写 height('100%')，否则内容高度
+   * 被压成满屏、滚动区长度失真。
+   */
   build() {
+    Scroll() {
     Column({ space: 12 }) {
       Row() {
         Button('返回')
@@ -617,12 +625,11 @@ struct Settings {
           .width('100%')
           if (this.renamingNotebookId === v.notebook.id) {
             Row({ space: 8 }) {
-              TextInput({ text: this.renameNotebookText })
+              // 双向绑定（$$）：输入即写入状态。单向 text + onChange 在部分输入
+              // 通道（无障碍/输入法注入）下不触发 onChange，会出现"框里改了、确定后没变"
+              TextInput({ text: $$this.renameNotebookText })
                 .fontSize(13)
                 .layoutWeight(1)
-                .onChange((value: string) => {
-                  this.renameNotebookText = value;
-                })
               Text('确定')
                 .fontSize(13)
                 .fontColor('#1F6FEB')
@@ -852,8 +859,11 @@ struct Settings {
         })
     }
     .width('100%')
-    .height('100%')
     .padding(16)
     .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Auto)
   }
 }

@@ -162,58 +162,6 @@ struct NoteEdit {
     }
   }
 
-  /**
-   * 删除本篇（= 移入回收站，软删除；与列表页滑动删除同一口径 §4.2）。
-   * 只有已落库的笔记才有（新建未保存的笔记丢弃即可，返回键已自动放弃空笔记）。
-   */
-  private confirmDelete(): void {
-    const name: string = this.titleText.trim().length > 0 ? this.titleText : '未命名笔记';
-    AlertDialog.show({
-      title: '移入回收站',
-      message: `《${name}》将移入回收站，从列表消失；可在「回收站」中恢复。`,
-      primaryButton: {
-        value: '取消',
-        action: () => {},
-      },
-      secondaryButton: {
-        value: '移入回收站',
-        fontColor: '#D4380D',
-        action: () => {
-          this.doDelete();
-        },
-      },
-    });
-  }
-
-  private async doDelete(): Promise<void> {
-    const svc: NoteService | undefined = this.noteSvc;
-    if (svc === undefined || this.busy) {
-      return;
-    }
-    this.busy = true;
-    try {
-      await svc.moveToTrash(this.noteId);
-      // 本篇正在朗读：先停，避免回收站里的笔记继续占播控与连读链
-      if (this.svc.globalPlayback().playingNoteId === this.noteId) {
-        void this.svc.globalPlayback().stopAll();
-      }
-      try {
-        const st = router.getState();
-        if (st !== undefined && st !== null && st.index > 0) {
-          router.back();
-          return;
-        }
-      } catch {
-        // 栈状态异常：按栈底处理，兜底去笔记库
-      }
-      void router.replaceUrl({ url: 'pages/NoteList' });
-    } catch (err) {
-      this.notice = `删除失败：${String(err)}`;
-    } finally {
-      this.busy = false;
-    }
-  }
-
   private async doSave(): Promise<void> {
     if (this.busy) {
       return;
@@ -302,15 +250,6 @@ struct NoteEdit {
           .fontWeight(FontWeight.Bold)
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
-        if (this.noteId.length > 0) {
-          Text('删除')
-            .fontSize(15)
-            .fontColor('#D4380D')
-            .margin({ right: 10 })
-            .onClick(() => {
-              this.confirmDelete();
-            })
-        }
         Toggle({ type: ToggleType.Switch, isOn: this.pinned })
           .onChange((isOn: boolean) => {
             this.pinned = isOn;

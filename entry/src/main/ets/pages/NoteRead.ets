@@ -498,61 +498,6 @@ struct NoteRead {
   }
 
   /**
-   * 删除本篇（= 移入回收站，软删除；与列表页滑动删除同一口径 §4.2）。
-   * 确认弹窗是阻断性要求：删除不可逆感极强，必须让用户看到"还能在回收站找回"。
-   */
-  private confirmDelete(): void {
-    const name: string = this.title.length > 0 ? this.title : '未命名笔记';
-    AlertDialog.show({
-      title: '移入回收站',
-      message: `《${name}》将移入回收站，从列表消失；可在「回收站」中恢复。`,
-      primaryButton: {
-        value: '取消',
-        action: () => {},
-      },
-      secondaryButton: {
-        value: '移入回收站',
-        fontColor: '#D4380D',
-        action: () => {
-          this.doDelete();
-        },
-      },
-    });
-  }
-
-  private async doDelete(): Promise<void> {
-    try {
-      const svc = await this.svc.noteService();
-      await svc.moveToTrash(this.noteId);
-      // 删掉的正是正在朗读的一篇：立刻收摊，否则回收站里的笔记还占着播控
-      // 与连读链（后续换篇会取到已删除内容）
-      if (this.global.playingNoteId === this.noteId) {
-        void this.global.stopAll();
-      }
-      this.leaveAfterDelete();
-    } catch (err) {
-      this.notice = `删除失败：${String(err)}`;
-    }
-  }
-
-  /**
-   * 删除后离场：常规路径回上一页（列表/主页 onPageShow 自刷新）；
-   * 本页若就是栈底（如从播控通知直接唤起，栈深 1），back 会退无可退 —— 转去笔记库。
-   */
-  private leaveAfterDelete(): void {
-    try {
-      const st = router.getState();
-      if (st !== undefined && st !== null && st.index > 0) {
-        router.back();
-        return;
-      }
-    } catch {
-      // 状态读取异常：按栈底处理，走下面的兜底导航
-    }
-    void router.replaceUrl({ url: 'pages/NoteList' });
-  }
-
-  /**
    * 资源拦截（G6 核心边界）：
    *  - attachment://：只服务本篇已授权摘要（预载表命中），否则 404；
    *  - http(s)：一律 404（默认离线，内容不自动联网）；
@@ -604,13 +549,6 @@ struct NoteRead {
           .margin({ left: 12 })
           .onClick(() => {
             router.pushUrl({ url: 'pages/NoteEdit', params: { 'noteId': this.noteId } });
-          })
-        Text('删除')
-          .fontSize(15)
-          .fontColor('#D4380D')
-          .margin({ left: 12 })
-          .onClick(() => {
-            this.confirmDelete();
           })
       }
       .width('100%')
