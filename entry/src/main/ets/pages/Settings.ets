@@ -110,6 +110,7 @@ struct Settings {
 
   private async refreshNotebooks(): Promise<void> {
     const svc: NotebookService = await this.svc.notebookService();
+    // 整体替换数组（不原地改），配合 ForEach 的复合 key 让行组件真正重渲染
     this.notebookViews = await svc.list();
   }
 
@@ -651,7 +652,7 @@ struct Settings {
         .padding(10)
         .backgroundColor('#F5F5F5')
         .borderRadius(8)
-      }, (v: NotebookView) => v.notebook.id)
+      }, (v: NotebookView) => `${v.notebook.id}|${v.notebook.name}|${v.noteCount}|${v.notebook.isDefault ? 1 : 0}`)
       Row({ space: 8 }) {
         TextInput({ placeholder: '新笔记本名称', text: this.newNotebookName })
           .fontSize(13)
