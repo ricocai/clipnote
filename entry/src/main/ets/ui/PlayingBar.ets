@@ -54,6 +54,28 @@ export struct PlayingBar {
     this.tick = this.tick + 1;
   }
 
+  /**
+   * 回到正在朗读的阅读页（第二批 Feature 5 真机实测修复）：已在该篇阅读页时
+   * **不再重复压页**——浮标也挂在阅读页上，重复压同一篇会产出第二个实例，
+   * 后者在渲染回调里抢走 GlobalPlayback 唯一的 UI 回调插槽，旧实例从此失去
+   * 状态更新与段落高亮（朗读还在出声，控件与高亮却不动）。
+   */
+  private gotoPlayingNote(): void {
+    try {
+      const st = router.getState();
+      if (st.path === 'pages/NoteRead') {
+        const p = st.params as Record<string, string> | undefined;
+        if (p !== undefined && p !== null && p['noteId'] === this.playingId) {
+          return; // 已在本页：无动作，页面上回归自身控制条
+        }
+      }
+    } catch {
+      // 路由状态获取失败：按未知页面处理，走 push（结果同上一次行为）
+    }
+    const params: Record<string, string> = { 'noteId': this.playingId };
+    router.pushUrl({ url: 'pages/NoteRead', params: params });
+  }
+
   build() {
     if ((this.playing || this.paused) && this.playingId.length > 0 && this.tick > 0) {
       Row({ space: 8 }) {
@@ -67,8 +89,7 @@ export struct PlayingBar {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
           .onClick(() => {
-            const params: Record<string, string> = { 'noteId': this.playingId };
-            router.pushUrl({ url: 'pages/NoteRead', params: params });
+            this.gotoPlayingNote();
           })
         if (this.playing) {
           Text('暂停')

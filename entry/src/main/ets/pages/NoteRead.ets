@@ -327,6 +327,33 @@ struct NoteRead {
    * 跨页继续；浮标（PlayingBar）与通知栏播控（GlobalPlayback 的 AVSession）
    * 接管控制权。彻底停止走浮标/通知栏的「停止」或本页控制条「停止」。
    */
+  /**
+   * 回到前台／从路由栈下层回到本页时重新接管 UI（第二批 Feature 5 真机实测修复）。
+   *
+   * 症状：朗读还在出声，但本页控制条状态与段落高亮不动 —— GlobalPlayback 只有
+   * **一个** UI 回调插槽，任何晚创建的实例（浮标重复压页、连读换篇）或页面在
+   * 栈下隐藏期间都不再收到回调；此前本页没有回显钩子，一旦失联就永久停在旧状态。
+   * 这里按全局当前快照自愈：接管插槽 → 同步状态/进度 → 补一次段落高亮。
+   * 渲染未完成时不处理（renderDocument 完成后自行走同一套接管逻辑）。
+   */
+  onPageShow(): void {
+    if (!this.planReady || !this.canSpeak()) {
+      return;
+    }
+    if (this.global.bindIfCurrent(this.noteId, this.uiSink)) {
+      this.playState = this.global.playbackState;
+      this.speechIndex = this.global.currentSegmentIndex;
+      this.highlightBlock(this.global.currentBlockIndex);
+      return;
+    }
+    // 全局已无本篇活动播放（如别处停止）：清掉陈旧的高亮与"朗读中"外观
+    if (this.global.playingNoteId.length === 0) {
+      this.playState = 'idle';
+      this.speechIndex = -1;
+      this.highlightBlock(-1);
+    }
+  }
+
   aboutToDisappear(): void {
     this.global.detachUi();
     this.highlightBlock(-1);
@@ -422,6 +449,10 @@ struct NoteRead {
           // 重进同一篇且该篇正在全局播放（播放中/暂停）：接管控制权并同步状态
           if (this.global.bindIfCurrent(this.noteId, this.uiSink)) {
             this.playState = this.global.playbackState;
+            // 半路接管（段已开播）：按全局游标同步进度与段落高亮，
+            // 否则要等下一个段边界才出现第一次高亮（真机实测）
+            this.speechIndex = this.global.currentSegmentIndex;
+            this.highlightBlock(this.global.currentBlockIndex);
           } else if (this.autoplay && this.ttsAvailable) {
             // 连读换篇（Feature 9）：跳进来即自动起播
             this.startReading();

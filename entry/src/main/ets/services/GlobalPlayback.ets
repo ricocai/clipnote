@@ -63,6 +63,13 @@ export class GlobalPlayback {
   private activeTitle: string = '';
   private state: PlaybackState = 'idle';
   private uiSink: PlaybackUiSink | undefined = undefined;
+  /**
+   * 当前在播段/块游标（供**晚绑定**的页面恢复 UI：页面可能在路由栈下层、
+   * 或晚于播放创建，绑定时拿不到历史回调。真机实测：浮标重复压页抢走 UI
+   * 插槽后，旧实例永久失去高亮与状态更新）。
+   */
+  private curSegment: number = -1;
+  private curBlock: number = -1;
   private readonly listeners: PlaybackListener[] = [];
   /** 换篇计数：AVSession assetId 随之自增以触发锁屏元数据刷新 */
   private ordinal: number = 0;
@@ -87,6 +94,16 @@ export class GlobalPlayback {
 
   get playbackState(): PlaybackState {
     return this.state;
+  }
+
+  /** 当前在播段下标（-1 = 无）。晚绑定的页面用它恢复"朗读中 N/M"显示 */
+  get currentSegmentIndex(): number {
+    return this.curSegment;
+  }
+
+  /** 当前在播段所在块下标（-1 = 无）。晚绑定的页面用它补一次段落高亮 */
+  get currentBlockIndex(): number {
+    return this.curBlock;
   }
 
   // ---- 状态监听（浮标 / 列表高亮） ----
@@ -152,6 +169,8 @@ export class GlobalPlayback {
     this.activeTitle = title;
     this.uiSink = sink;
     this.ordinal++;
+    this.curSegment = -1;
+    this.curBlock = -1;
     await ctl.load(plan);
     await this.ensureAv();
     await this.av.updateMetadata(title, this.ordinal);
@@ -193,6 +212,8 @@ export class GlobalPlayback {
     this.activeTitle = '';
     this.state = 'idle';
     this.uiSink = undefined;
+    this.curSegment = -1;
+    this.curBlock = -1;
     this.broadcast();
   }
 
@@ -227,6 +248,10 @@ export class GlobalPlayback {
           this.onControllerState(state);
         },
         onSegmentStart: (item: SpeechPlanItem): void => {
+          // 游标先行记录：即便此刻没有 UI 接收（页面在栈下/晚创建），
+          // 该页回到前台时也能按游标自愈（补状态 + 补高亮）
+          this.curSegment = item.segment.index;
+          this.curBlock = item.blockIndex;
           this.uiSink?.onSegmentStart(item);
         },
         onProgress: (): void => undefined,
@@ -245,6 +270,11 @@ export class GlobalPlayback {
   /** 状态分发：长时任务/广播/UI 回调三路（uiSink 可选） */
   private onControllerState(state: PlaybackState): void {
     this.state = state;
+    if (state === 'ready') {
+      // 游标归零（新一轮计划从头起播）
+      this.curSegment = -1;
+      this.curBlock = -1;
+    }
     if (state === 'playing') {
       void this.applyBackgroundMode(true);
     } else if (state === 'completed' || state === 'failed' || state === 'idle') {
