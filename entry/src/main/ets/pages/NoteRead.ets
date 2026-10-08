@@ -1,6 +1,5 @@
 import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import { common } from '@kit.AbilityKit';
 import {
   ATTACHMENT_SCHEME,
@@ -341,25 +340,19 @@ struct NoteRead {
       this.markdown = note.contentMd;
       this.revision = note.revision;
       // 预载本篇授权附件（字节 + MIME），拦截器同步查表；G6 不接受网页传入任意路径
-      // 单个附件缺失（如 blob 文件丢失）不拖垮整篇：如实记日志、跳过该附件，
-      // 其余内容照常渲染；缺失图片在拦截层走 MISS → 404 占位，hilog 留证。
+      // 单个附件缺失（如 blob 文件丢失）不拖垮整篇：跳过该附件，
+      // 其余内容照常渲染；缺失图片在拦截层走 MISS → 404 占位。
       const images = await svc.listRenderableImages(this.noteId);
-      let preloaded: number = 0;
       for (let i: number = 0; i < images.length; i++) {
         const img = images[i];
         try {
           const bytes: Uint8Array = await this.svc.readAttachmentBytes(img.sha256);
           this.attachmentBytes.set(img.sha256, bytes);
           this.attachmentMime.set(img.sha256, img.mime);
-          preloaded++;
         } catch (imgErr) {
-          hilog.error(0xF1C1, 'ClipNoteRead', 'attachment preload failed sha=%{public}s err=%{public}s',
-            img.sha256, String(imgErr));
+          // 单附件读取失败仅跳过，不阻断整篇渲染
         }
       }
-      // Q1 验收期诊断：预载规模留证（images 与 preloaded 不一致即有附件没读出来）
-      hilog.info(0xF1C1, 'ClipNoteRead', 'note loaded id=%{public}s images=%{public}d preloaded=%{public}d',
-        this.noteId, images.length, preloaded);
       this.ready = true;
       // Web 组件在 ready 后才进 build()，页面加载完成后 onPageEnd 驱动渲染
     } catch (err) {
@@ -443,14 +436,9 @@ struct NoteRead {
       if (sha !== undefined && this.attachmentBytes.has(sha)) {
         const bytes: Uint8Array = this.attachmentBytes.get(sha) as Uint8Array;
         const mime: string = this.attachmentMime.has(sha) ? (this.attachmentMime.get(sha) as string) : 'application/octet-stream';
-        // Q1 验收期诊断（随 G1 探针一并移除）：拦截命中即留证，真机/模拟器可对 hilog
-        hilog.info(0xF1C1, 'ClipNoteRead', 'attachment hit sha=%{public}s len=%{public}d mime=%{public}s',
-          sha.slice(0, 12), bytes.byteLength, mime);
         return attachmentResponse(mime, bytes);
       }
-      // 未命中（sha 非法或附件未预载）是图片不显示的最大嫌疑路径，必须留证
-      hilog.error(0xF1C1, 'ClipNoteRead', 'attachment MISS url=%{public}s sha=%{public}s preloaded=%{public}d',
-        url, sha === undefined ? 'illegal' : sha.slice(0, 12), this.attachmentBytes.size);
+      // 未命中（sha 非法或附件未预载）→ 404 占位
       return blockedResponse();
     }
     if (url.startsWith('http://') || url.startsWith('https://')) {

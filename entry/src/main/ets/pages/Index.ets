@@ -620,16 +620,6 @@ struct Index {
         .border({ width: 1, color: '#FFD591' })
       }
 
-      // G1 PROBE（WHY-90 临时入口，G1 验收后移除）：真机执行探测场景页
-      Text('G1 探测页（临时）')
-        .fontSize(12)
-        .fontColor('#8C8C8C')
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .onClick(() => {
-          router.pushUrl({ url: 'pages/G1ProbePage' });
-        })
-
       Row() {
         Text(`收件箱（${this.pendingCount}/${DEFAULT_INBOX_CAPACITY}）`)
           .fontSize(16)

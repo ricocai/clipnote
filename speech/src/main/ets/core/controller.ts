@@ -68,6 +68,15 @@ export interface PlaybackCommandSink {
 /** 焦点中断上报（entry 侧映射到 controller.interrupt(reason)） */
 export type InterruptHandler = (reason: string) => void;
 
+/**
+ * 代际签发器（进程级单调递增）。引擎是跨页单例（AppServices），而控制器随阅读页
+ * 每次进入新建——若签发器留在控制器实例上，新控制器从 1 重发会撞引擎的
+ * lastGeneration（真机验收实测：第二次进笔记点朗读报「generation 1 未自增
+ * （last=4）」）。签发权必须上移到与引擎同寿命的进程域，严格递增（设计 §4.6）
+ * 由单点保证；引擎若被重建，更大的代际值对其仍然合法。
+ */
+let issuedGeneration: number = 0;
+
 export class SpeechPlaybackController {
   private planValue: SpeechPlan | undefined = undefined;
   private stateValue: PlaybackState = 'idle';
@@ -316,7 +325,8 @@ export class SpeechPlaybackController {
         this.cursor = item.segment.index + 1;
         this.refill(); // 消费一段补一段，窗口有界
         this.activeItemValue = item;
-        const gen: number = ++this.generation;
+        const gen: number = ++issuedGeneration; // 进程级签发（见文件头说明），控制器实例只记录本轮回合
+        this.generation = gen;
         this.activeGeneration = gen;
         this.callbacks.onSegmentStart(item);
         const cbs: TtsCallbacks = {

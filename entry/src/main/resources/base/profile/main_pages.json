@@ -7,7 +7,6 @@
     "pages/NoteRead",
     "pages/HtmlRead",
     "pages/Settings",
-    "pages/McpAuditPage",
-    "pages/G1ProbePage"
+    "pages/McpAuditPage"
   ]
 }

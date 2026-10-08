@@ -483,3 +483,30 @@ test('controller：stop 回到计划头可直接再播；空计划安全降级',
   await c.release();
   assert.equal(engine.state, 'released');
 });
+
+// ---- 真机验收回归：引擎单例 + 阅读页每次新建控制器 → 代际签发器必须进程级 ----
+
+test('controller：跨控制器代际签发——同一引擎上新建控制器不再撞 lastGeneration', async () => {
+  const driver = new AutoDriver();
+  const engine = new SystemTtsEngine(driver); // 引擎单例（AppServices 语义），跨控制器复用
+
+  const planA: SpeechPlan = planSpeech([block(0, BlockType.PARAGRAPH, '第一篇。')], '第一篇。');
+  const planB: SpeechPlan = planSpeech([block(0, BlockType.PARAGRAPH, '第二篇。')], '第二篇。');
+
+  // 第一个控制器（第一篇笔记的阅读页）：播完，引擎 lastGeneration 已推进
+  const { cb: cb1 } = collector();
+  const c1 = new SpeechPlaybackController(engine, cb1);
+  await c1.load(planA);
+  await c1.play();
+  assert.equal(c1.state, 'completed');
+
+  // 第二个控制器（新阅读页，引擎不变）——修复前必抛「generation 1 未自增（last=N）」
+  const { events: events2, cb: cb2 } = collector();
+  const c2 = new SpeechPlaybackController(engine, cb2);
+  await c2.load(planB);
+  await c2.play();
+  assert.equal(c2.state, 'completed');
+
+  assert.deepEqual(spokenTexts(driver), ['第一篇。', '第二篇。']);
+  assert.ok(events2.includes('start:0@0'));
+});
