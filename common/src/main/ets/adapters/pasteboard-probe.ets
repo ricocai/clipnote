@@ -22,6 +22,19 @@ export class SystemPasteboardProbe implements ClipboardProbe {
     }
   }
 
+  /**
+   * 变更计数（Feature 6 直写去重）：API 18+，同步接口，不读内容、不受
+   * READ_PASTEBOARD 管控。每次复制自增（复制相同内容也计数）；剪贴板服务
+   * 重启归零。探测异常折叠为 0，由采集门按"无变化"处理。
+   */
+  async changeCount(): Promise<number> {
+    try {
+      return pasteboard.getSystemPasteboard().getChangeCount();
+    } catch (err) {
+      return 0;
+    }
+  }
+
   async readText(): Promise<string> {
     const board: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
     // 空剪贴板（或无文本类内容）时，getData 返回的 PasteData 记录数组未初始化，

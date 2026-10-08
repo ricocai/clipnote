@@ -1,9 +1,11 @@
 import { router } from '@kit.ArkUI';
 import {
+  AutoCaptureCheck,
   CaptureKind,
   CaptureResult,
   ClipEntry,
   ClipKind,
+  ClipboardAutoCaptureController,
   ClipboardItem,
   DEFAULT_INBOX_CAPACITY,
   DEFAULT_SHARE_POLICY,
@@ -158,6 +160,8 @@ struct Index {
   /** 剪贴板唯一接触面（S2-4）：hasData 只探测布尔；readText 只在用户手势后调用 */
   private readonly probe: SystemPasteboardProbe = new SystemPasteboardProbe();
   private readonly fgPrompt: ForegroundPromptController = new ForegroundPromptController();
+  /** 直写采集门（Feature 6 真机修复）：以变更计数判定"新复制"，与提示态互不影响 */
+  private readonly autoCapture: ClipboardAutoCaptureController = new ClipboardAutoCaptureController();
   /** 入口互斥：安全控件 / 直接读取（降级）/ 提示条，同一时间至多一条"读取"在途 */
   private readBusy: boolean = false;
   private fgChecking: boolean = false;
@@ -235,11 +239,12 @@ struct Index {
   }
 
   /**
-   * 回前台检查（S2-4 + 第二批 Feature 6 直写口径）：
-   *  - 开关开：检测到新内容集 → 直接读取并写入收件箱（readBoardAndCapture
-   *    内的 fgPrompt.accept 保证同一内容集只写一次——沿用状态机去重口径）；
-   *    系统可能弹剪贴板授权框（"使用前每次询问"策略），如实接受，设置页有引导文案；
-   *  - 开关关：只探测"有没有内容"，不读取，展示提示条交用户决定（S2-4 现状）。
+   * 回前台检查（S2-4 + 第二批 Feature 6 直写口径；真机实测修复版）：
+   *  - 开关开：以剪贴板**变更计数**判定新复制（ClipboardAutoCaptureController），
+   *    每次新复制都会写入收件箱。此前复用提示态的"非空集只处理一次"语义，
+   *    连续复制（剪贴板从不为空）时只有第一次被写入——真机实测回归；
+   *    系统可能弹剪贴板授权框，如实接受，设置页有引导文案；
+   *  - 开关关：S2-4 提示条口径不变（探测布尔，用户手势后读取）。
    */
   private async checkForeground(): Promise<void> {
     if (this.fgChecking) {
@@ -247,17 +252,20 @@ struct Index {
     }
     this.fgChecking = true;
     try {
-      const res: ForegroundCheck = await this.fgPrompt.checkOnForeground(this.probe);
-      if (res !== ForegroundCheck.NONE) {
-        if (this.autoInbox && this.dataReady) {
-          this.promptOpen = false;
-          await this.readBoardAndCapture(ClipEntry.RETURN_TO_FOREGROUND);
-        } else {
-          this.promptOpen = true;
+      if (this.autoInbox) {
+        const res: AutoCaptureCheck = await this.autoCapture.checkOnForeground(this.probe);
+        if (res === AutoCaptureCheck.CAPTURE) {
+          if (this.dataReady) {
+            this.promptOpen = false;
+            await this.readBoardAndCapture(ClipEntry.RETURN_TO_FOREGROUND);
+          } else {
+            this.promptOpen = true; // 数据层未就绪：降级为提示条，用户手势后重试
+          }
         }
-      } else {
-        this.promptOpen = false;
+        return;
       }
+      const res: ForegroundCheck = await this.fgPrompt.checkOnForeground(this.probe);
+      this.promptOpen = res !== ForegroundCheck.NONE;
     } finally {
       this.fgChecking = false;
     }
@@ -333,6 +341,8 @@ struct Index {
       this.fgPrompt.accept();
       this.promptOpen = false;
       const text: string = await this.probe.readText();
+      // 直写采集门抬基线：显式入口已消费本次变更，回前台不得再抓同一份（真机实测修复）
+      void this.autoCapture.syncAfterRead(this.probe);
       if (text.length === 0) {
         this.notice = '剪贴板当前没有可保存的文本。';
         return;

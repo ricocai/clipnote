@@ -86,6 +86,12 @@ export interface IFileStore {
 export interface ClipboardProbe {
   hasData(): Promise<boolean>;
   readText(): Promise<string>;
+  /**
+   * 系统剪贴板内容变更计数（Feature 6 直写去重口径；API 18+ getChangeCount：
+   * 每次复制自增，复制相同内容也计数；剪贴板服务重启归零）。只回答计数，
+   * 不触碰内容，与 hasData 同类不受 READ_PASTEBOARD 管控。失败由实现折叠为 0。
+   */
+  changeCount(): Promise<number>;
 }
 
 export enum PasteboardPermissionState {

@@ -210,14 +210,7 @@ export class GlobalPlayback {
       await this.stopAll();
       return;
     }
-    try {
-      await router.replaceUrl({
-        url: 'pages/NoteRead',
-        params: { 'noteId': next.id, 'autoplay': '1' } as Record<string, string>,
-      });
-    } catch {
-      // 页面栈异常（极端竞态）：本轮连读放弃
-    }
+    await this.gotoNextNote(next);
   }
 
   /** 退页解绑 UI 回调（高亮等），播放本体继续（Feature 5 全局化核心） */
@@ -273,11 +266,24 @@ export class GlobalPlayback {
       await this.stopAll(); // 读完全部（或当前篇已不在列表）
       return;
     }
+    await this.gotoNextNote(next);
+  }
+
+  /**
+   * 换篇导航（真机实测修复）：当前栈顶是阅读页 → replaceUrl 原地换篇（栈深不变）；
+   * 否则（用户已退到列表/主页等）→ pushUrl 压栈——连读继续但不吞掉用户所在页。
+   * 此前无条件 replaceUrl：朗读完成时若用户在 Index（栈深 1），Index 被顶掉，
+   * 栈只剩阅读页，再点返回即空栈 → 整个 App 退后台（表现为"返回即退出"）。
+   */
+  private async gotoNextNote(next: Note): Promise<void> {
+    const params: Record<string, string> = { 'noteId': next.id, 'autoplay': '1' };
     try {
-      await router.replaceUrl({
-        url: 'pages/NoteRead',
-        params: { 'noteId': next.id, 'autoplay': '1' } as Record<string, string>,
-      });
+      const st = router.getState();
+      if (st.path === 'pages/NoteRead') {
+        await router.replaceUrl({ url: 'pages/NoteRead', params: params });
+      } else {
+        await router.pushUrl({ url: 'pages/NoteRead', params: params });
+      }
     } catch {
       // 页面栈异常（极端竞态）：本轮连读放弃，播放停在 completed
     }

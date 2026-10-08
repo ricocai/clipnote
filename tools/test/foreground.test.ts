@@ -33,6 +33,10 @@ class QueueProbe implements ClipboardProbe {
     // 提示状态机绝不允许经由本探针读取内容
     throw new Error('readText must never be called by ForegroundPromptController');
   }
+
+  async changeCount(): Promise<number> {
+    return 0;
+  }
 }
 
 function throwingProbe(): ClipboardProbe {
@@ -41,6 +45,9 @@ function throwingProbe(): ClipboardProbe {
       throw new Error('201 Permission verification failed');
     },
     async readText(): Promise<string> {
+      throw new Error('unreachable');
+    },
+    async changeCount(): Promise<number> {
       throw new Error('unreachable');
     },
   };
