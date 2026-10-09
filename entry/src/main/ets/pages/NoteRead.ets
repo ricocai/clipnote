@@ -340,6 +340,8 @@ struct NoteRead {
   onPageShow(): void {
     // 登记本页可见性：浮标据此判定「已在该篇阅读页」→ 不再重复压页
     this.global.markReadVisible(this.noteId);
+    // 内容校准：从编辑页保存返回（或本篇在别处被改动）后回来，正文必须是库内现状
+    void this.refreshIfChanged();
     if (!this.planReady || !this.canSpeak()) {
       return;
     }
@@ -408,19 +410,7 @@ struct NoteRead {
       this.markdown = note.contentMd;
       this.revision = note.revision;
       // 预载本篇授权附件（字节 + MIME），拦截器同步查表；G6 不接受网页传入任意路径
-      // 单个附件缺失（如 blob 文件丢失）不拖垮整篇：跳过该附件，
-      // 其余内容照常渲染；缺失图片在拦截层走 MISS → 404 占位。
-      const images = await svc.listRenderableImages(this.noteId);
-      for (let i: number = 0; i < images.length; i++) {
-        const img = images[i];
-        try {
-          const bytes: Uint8Array = await this.svc.readAttachmentBytes(img.sha256);
-          this.attachmentBytes.set(img.sha256, bytes);
-          this.attachmentMime.set(img.sha256, img.mime);
-        } catch (imgErr) {
-          // 单附件读取失败仅跳过，不阻断整篇渲染
-        }
-      }
+      await this.loadAttachments();
       this.ready = true;
       // Web 组件在 ready 后才进 build()，页面加载完成后 onPageEnd 驱动渲染
     } catch (err) {
@@ -428,12 +418,96 @@ struct NoteRead {
     }
   }
 
-  /** 渲染链路：markdown-it 在 Web 内解析 → 块模型 → 渲染进 DOM（各步失败如实提示） */
+  /**
+   * 预载本篇授权附件（字节 + MIME），拦截器同步查表；G6 不接受网页传入任意路径。
+   * 单个附件缺失（如 blob 文件丢失）不拖垮整篇：跳过该附件，其余内容照常渲染；
+   * 缺失图片在拦截层走 MISS → 404 占位。
+   * 每次调用按库内现状**重建**授权表：编辑正文可能新增或删掉图片引用，
+   * 授权面必须随笔记当前内容收敛（不留存已被删掉的附件）。
+   */
+  private async loadAttachments(): Promise<void> {
+    const svc = await this.svc.noteService();
+    this.attachmentBytes.clear();
+    this.attachmentMime.clear();
+    const images = await svc.listRenderableImages(this.noteId);
+    for (let i: number = 0; i < images.length; i++) {
+      const img = images[i];
+      try {
+        const bytes: Uint8Array = await this.svc.readAttachmentBytes(img.sha256);
+        this.attachmentBytes.set(img.sha256, bytes);
+        this.attachmentMime.set(img.sha256, img.mime);
+      } catch (imgErr) {
+        // 单附件读取失败仅跳过，不阻断整篇渲染
+      }
+    }
+  }
+
+  /**
+   * 回前台按数据层事实校准本篇正文（编辑保存后回来页面不刷新 = 陈旧渲染）。
+   *
+   * 症状：编辑页（pages/NoteEdit）保存后 router.back() 回到本页，UI 只走 onPageShow，
+   * 而本页内容此前只在 aboutToAppear 取过一次 —— 块模型与 DOM 都还是编辑前的，
+   * 必须退回列表再进一次才看得到新内容。
+   * 口径：以库内 title/contentMd 为事实源，与内存快照一致就不重绘（避免无谓重绘
+   * 打断阅读位置），不一致才重建附件授权表 + 块模型并重绘 DOM。首屏未渲染完时不动
+   * （loadNote → onPageEnd → renderDocument 自会走完整链路）。
+   * 校准失败不打断阅读：保留已渲染内容，下次回前台重试。
+   */
+  private async refreshIfChanged(): Promise<void> {
+    if (!this.ready || !this.renderStarted) {
+      return;
+    }
+    try {
+      const svc = await this.svc.noteService();
+      const note = await svc.getById(this.noteId);
+      if (note === undefined) {
+        return;
+      }
+      const contentChanged: boolean = note.contentMd !== this.markdown || note.title !== this.title;
+      this.title = note.title;
+      this.revision = note.revision;
+      if (!contentChanged) {
+        return; // 仅标签/置顶变化：不影响正文，不重绘
+      }
+      this.markdown = note.contentMd;
+      await this.loadAttachments();
+      this.stopPlaybackOnContentChange();
+      this.renderNow(false);
+    } catch {
+      // 回前台校准失败：静默保留旧内容（不把阅读页换成错误提示）
+    }
+  }
+
+  /**
+   * 正文已变而本篇正在朗读：旧计划与新块模型不再对应（高亮锚点失效），
+   * 停止朗读并如实提示，不静默继续播旧内容（播的内容与屏幕上看到的不是一回事）。
+   */
+  private stopPlaybackOnContentChange(): void {
+    if (this.global.playingNoteId !== this.noteId) {
+      return;
+    }
+    void this.global.stopAll();
+    this.playState = 'idle';
+    this.speechIndex = -1;
+    this.speechNotice = '正文已更新，朗读已停止。';
+  }
+
+  /** 首屏渲染：Web 加载完成（onPageEnd）驱动一次；重入由 renderStarted 兜住 */
   private renderDocument(): void {
     if (this.renderStarted) {
       return;
     }
     this.renderStarted = true;
+    this.renderNow(true);
+  }
+
+  /**
+   * 渲染链路：markdown-it 在 Web 内解析 → 块模型 → 渲染进 DOM（各步失败如实提示）。
+   * firstRender=false 用于「内容已变更后的重绘」：走完全相同的解析—渲染链路
+   * （bridge.js 的 __clipnoteRender 整体替换 #root.innerHTML，重绘即换内容），
+   * 但不复用首屏专属的连读语义（autoplay 起播 / 空正文自动推进下一篇）。
+   */
+  private renderNow(firstRender: boolean): void {
     const sourceJson: string = JSON.stringify(this.markdown);
     // 桥接约定（bridge.js）：入参是 JSON 文本，函数体内自行 JSON.parse。
     // 经 JS 源码拼接调用时实参会先被 JS 引擎解一层字符串字面量，
@@ -462,11 +536,11 @@ struct NoteRead {
             // 否则要等下一个段边界才出现第一次高亮（真机实测）
             this.speechIndex = this.global.currentSegmentIndex;
             this.highlightBlock(this.global.currentBlockIndex);
-          } else if (this.autoplay && this.ttsAvailable) {
-            // 连读换篇（Feature 9）：跳进来即自动起播
+          } else if (firstRender && this.autoplay && this.ttsAvailable) {
+            // 连读换篇（Feature 9）：跳进来即自动起播（仅在首屏，重绘不得自行起播）
             this.startReading();
           }
-        } else if (this.autoplay) {
+        } else if (firstRender && this.autoplay) {
           // 连读链上遇到空正文/纯图片笔记（无朗读计划）：推进到下一篇，不能卡死在本篇
           void this.global.advanceFrom(this.noteId);
         }
