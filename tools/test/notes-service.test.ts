@@ -381,3 +381,42 @@ test('Q4 保存去重：回收站中的笔记不参与；编辑（有 id）路�
   assert.equal(edited.id, second.id);
   assert.equal(edited.revision, 2);
 });
+
+// ---------------------------------------------------------------------------
+// 真机场景回归（2026-10-09 用户报「合并对象/顺序紊乱」）：链式合并。
+// 保留篇的内容可能本身就是历史合并结果，再次被合并时会把历史内容整包带入
+// 下一篇；此时每一篇源笔记都必须照常进垃圾桶，不能出现"内容被并走、源却还在列表里"。
+// ---------------------------------------------------------------------------
+test('mergeNotes：链式合并（源笔记自身已是合并结果／曾被从垃圾桶恢复）时，每一篇源都进垃圾桶', async () => {
+  const f = await makeFixture();
+  const g = await f.svc.save({ title: 'glinscott', contentMd: 'GLINSCOTT_URL' });
+  const m = await f.svc.save({ title: '机器', contentMd: '机器正文' });
+  const o = await f.svc.save({ title: 'OpenAI', contentMd: 'OPENAI原文' });
+  const w = await f.svc.save({ title: 'weibo', contentMd: 'WEIBO正文' });
+
+  // 合并①：机器并入 glinscott（glinscott 自此自带历史内容）
+  await f.svc.mergeNotes([g.id, m.id]);
+  // 用户随后从垃圾桶恢复了机器（真机实测确有此步）
+  await f.svc.restore(m.id);
+
+  // 合并②：glinscott（已自带历史内容）与 weibo 并入 OpenAI
+  const merged = await f.svc.mergeNotes([o.id, g.id, w.id]);
+
+  // 保留篇沿用 OpenAI；历史内容随 glinscott 整包带入
+  assert.equal(merged.id, o.id);
+  assert.equal(merged.title, 'OpenAI');
+  assert.equal(
+    merged.contentMd,
+    'OPENAI原文\n\n---\n\nGLINSCOTT_URL\n\n---\n\n机器正文\n\n---\n\nWEIBO正文',
+  );
+
+  // 关键不变量：两个源都要进垃圾桶，不能出现"内容被并走、源仍在活体列表"
+  const gAfter = await f.notes.getById(g.id, true);
+  const wAfter = await f.notes.getById(w.id, true);
+  assert.notEqual(gAfter?.deletedAtMs, undefined, '被并入的 glinscott 必须进垃圾桶');
+  assert.notEqual(wAfter?.deletedAtMs, undefined, '被并入的 weibo 必须进垃圾桶');
+
+  // 活体列表只剩 keeper 与用户主动恢复的那篇
+  const live = (await f.svc.listRecent(10)).map((n) => n.id).sort();
+  assert.deepEqual(live, [o.id, m.id].sort());
+});

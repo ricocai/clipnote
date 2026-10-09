@@ -34,6 +34,9 @@ interface NoteRow {
   readonly updatedAtMs: number;
   /** 'text/html' 行进受控展示页（S3-3），只读、无编辑入口 */
   readonly contentType: string;
+  /** 正文内的历史合并段数（1 = 未被合并过；>1 = 自身已是合并结果）。
+    合并会把"\n\n---\n\n"之前的全部历史内容整包带给保留篇，UI 必须提前披露 */
+  readonly mergedSegments: number;
 }
 
 @Entry
@@ -134,6 +137,7 @@ struct NoteList {
         pinned: n.pinned,
         updatedAtMs: n.updatedAtMs,
         contentType: n.contentType,
+        mergedSegments: n.contentMd.split('\n\n---\n\n').length,
       });
     }
     this.rows = built;
@@ -185,27 +189,71 @@ struct NoteList {
     }
   }
 
-  /** 按列表顺序取所选 id（合并的正文拼接顺序 = 列表顺序） */
-  private selectedIdsInListOrder(): string[] {
-    const ordered: string[] = [];
-    for (let i: number = 0; i < this.rows.length; i++) {
-      if (this.selectedIds.indexOf(this.rows[i].id) >= 0) {
-        ordered.push(this.rows[i].id);
-      }
+  /**
+   * 多选标记：👑 = 保留篇（**第一个勾选**的），↩ = 并入本篇后移入垃圾桶，☐ = 未勾选。
+   * 保留篇口径改为"勾选顺序"而非"列表顺序" —— 列表順序对用户不可预期（置顶/更新时间
+   * 重排后会变），用户勾选时所见必须即得。
+   */
+  private pickMarkOf(id: string): string {
+    const idx: number = this.selectedIds.indexOf(id);
+    if (idx < 0) {
+      return '☐';
     }
-    return ordered;
+    return idx === 0 ? '👑' : '↩';
   }
 
-  /** 多选合并（Feature 3）：确认文案如实说明其余 N-1 篇的去向（垃圾桶，可恢复） */
+  private titleOf(id: string): string {
+    for (let i: number = 0; i < this.rows.length; i++) {
+      if (this.rows[i].id === id) {
+        return this.rows[i].title;
+      }
+    }
+    return id;
+  }
+
+  private shortTitleOf(id: string): string {
+    const t: string = this.titleOf(id);
+    return t.length > 16 ? `${t.slice(0, 16)}…` : t;
+  }
+
+  private mergedSegmentsOf(id: string): number {
+    for (let i: number = 0; i < this.rows.length; i++) {
+      if (this.rows[i].id === id) {
+        return this.rows[i].mergedSegments;
+      }
+    }
+    return 1;
+  }
+
+  /** 多选合并（Feature 3）：保留**第一个勾选**的；确认文案点名保留篇与并入篇，
+    并如实披露"某篇自身已是合并结果、其历史内容会整包带入" */
   private confirmMergeSelected(): void {
     const n: number = this.selectedIds.length;
     if (n < 2) {
       this.notice = '合并至少需要勾选 2 篇笔记。';
       return;
     }
+    const keeperTitle: string = this.shortTitleOf(this.selectedIds[0]);
+    const others: string[] = [];
+    for (let i: number = 1; i < this.selectedIds.length; i++) {
+      others.push(`《${this.shortTitleOf(this.selectedIds[i])}》`);
+    }
+    let message: string = `保留《${keeperTitle}》，把${others.join('、')}的正文按顺序并入 ` +
+      `《${keeperTitle}》；其余 ${n - 1} 篇移入垃圾桶，可从垃圾桶恢复。`;
+    // 嵌套合并披露：避免"合并一篇却带进来它肚子里以前合并过的内容"这种预期外结果
+    const nested: string[] = [];
+    for (let i: number = 1; i < this.selectedIds.length; i++) {
+      const seg: number = this.mergedSegmentsOf(this.selectedIds[i]);
+      if (seg > 1) {
+        nested.push(`《${this.shortTitleOf(this.selectedIds[i])}》（含 ${seg} 段历史合并内容）`);
+      }
+    }
+    if (nested.length > 0) {
+      message += `\n\n注意：${nested.join('、')}此前已被合并过，其中的历史内容会一并带入《${keeperTitle}》。`;
+    }
     AlertDialog.show({
       title: '合并笔记',
-      message: `将按列表顺序合并 ${n} 篇笔记：正文拼接到首篇（其余 ${n - 1} 篇移入垃圾桶，可从垃圾桶恢复）。`,
+      message: message,
       primaryButton: {
         value: '取消',
         action: () => {},
@@ -224,9 +272,10 @@ struct NoteList {
       return;
     }
     try {
-      const ordered: string[] = this.selectedIdsInListOrder();
+      // 勾选顺序：首个勾选的是保留篇（= 上方确认文案所示），其余按其顺序拼接
+      const ordered: string[] = this.selectedIds.slice();
       const merged: Note = await this.noteSvc.mergeNotes(ordered);
-      this.notice = `已合并 ${ordered.length} 篇到《${merged.title}》（其余已入垃圾桶，可恢复）。`;
+      this.notice = `已合并 ${ordered.length} 篇到《${this.shortTitleOf(merged.id)}》（其余已入垃圾桶，可恢复）。`;
       this.exitSelecting();
       await this.refresh();
     } catch (err) {
@@ -414,9 +463,9 @@ struct NoteList {
               Column({ space: 4 }) {
                 Row({ space: 8 }) {
                   if (this.selecting) {
-                    Text(this.selectedIds.indexOf(row.id) >= 0 ? '☑' : '☐')
+                    Text(this.pickMarkOf(row.id))
                       .fontSize(16)
-                      .fontColor('#1F6FEB')
+                      .fontColor(this.selectedIds.indexOf(row.id) >= 0 ? '#1F6FEB' : '#BFBFBF')
                   }
                   Text(`${row.pinned ? '📌 ' : ''}${this.playingId === row.id ? '🔊 ' : ''}${row.contentType === CONTENT_TYPE_HTML ? '[HTML] ' : ''}${row.title}`)
                     .fontSize(15)
@@ -483,9 +532,13 @@ struct NoteList {
       // 多选导出操作条（S4-2 批量入口）：导出 ≠ 备份，产物经系统分享交接
       if (this.selecting) {
         Row({ space: 10 }) {
-          Text(`已选 ${this.selectedIds.length} 篇`)
+          Text(this.selectedIds.length === 0
+            ? '勾选笔记（先勾的保留）'
+            : `已选 ${this.selectedIds.length} 篇 · 保留《${this.shortTitleOf(this.selectedIds[0])}》`)
             .fontSize(13)
             .fontColor('#595959')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
           Button('合并')
             .fontSize(14)
