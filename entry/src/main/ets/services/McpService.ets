@@ -263,12 +263,14 @@ async function localIpv4Addresses(logger: HilogLogger): Promise<string[]> {
   const out: string[] = [];
   try {
     // SDK 无 NetHandle 本机地址枚举接口；LAN 服务场景即 Wi-Fi，
-    // 取 wifiManager.getIpInfo() 的 STA 地址（小端序 number → 点分十进制）。
+    // 取 wifiManager.getIpInfo() 的 STA 地址。注意 HarmonyOS 的 ipAddress 为
+    // 网络字节序（大端）整数，须按大端拆字节，否则会得到四字节整体倒序的错 IP
+    // （曾误显示为真实地址的八位组倒序，并连带污染 Host 白名单 → 直连 403）。
     // 失败（无 Wi-Fi / 权限受限）收敛为空表并记警告——显式失败，不静默放开。
     const info: wifiManager.IpInfo = wifiManager.getIpInfo();
     const ip: number = info.ipAddress;
     if (ip !== 0) {
-      out.push(`${ip & 0xFF}.${(ip >> 8) & 0xFF}.${(ip >> 16) & 0xFF}.${(ip >> 24) & 0xFF}`);
+      out.push(`${(ip >>> 24) & 0xFF}.${(ip >>> 16) & 0xFF}.${(ip >>> 8) & 0xFF}.${ip & 0xFF}`);
     }
   } catch (err) {
     const fields: Record<string, string | number | boolean> = {};
