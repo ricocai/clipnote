@@ -1,4 +1,5 @@
 import { router } from '@kit.ArkUI';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
   AppFeatureSettingsPatch,
@@ -407,17 +408,42 @@ struct Settings {
       if (issued === undefined) {
         this.notice = '该配对请求已失效（可能已被处理或过期）';
       } else {
+        const token: string = issued.token;
         AlertDialog.show({
           title: '配对成功',
-          message: '请把以下访问令牌粘贴到 Host 客户端（只显示这一次，关闭后无法找回）：\n\n' +
-            issued.token,
-          confirm: { value: '我已保存', action: () => undefined },
+          message: '访问令牌已生成（只显示这一次，关闭后无法找回）。点「我要复制」把它存入系统剪贴板，' +
+            '随后粘贴到 Host 客户端的 Authorization 头：\n\n' + token,
+          primaryButton: {
+            value: '我要复制',
+            action: (): void => {
+              this.copyMcpToken(token);
+            },
+          },
+          secondaryButton: {
+            value: '关闭',
+            action: (): void => undefined,
+          },
         });
       }
     } catch (err) {
       this.notice = `确认配对失败：${String(err)}`;
     }
     await this.refreshMcp();
+  }
+
+  /** 配对成功弹窗「我要复制」：把访问令牌写入系统剪贴板（失败则提示手动选择） */
+  private copyMcpToken(token: string): void {
+    try {
+      const board: pasteboard.SystemPasteboard = pasteboard.getSystemPasteboard();
+      const data: pasteboard.PasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, token);
+      board.setData(data).then((): void => {
+        this.notice = '访问令牌已复制到剪贴板';
+      }).catch((err: Error): void => {
+        this.notice = `复制失败：${String(err)}（请手动长按选择令牌）`;
+      });
+    } catch (err) {
+      this.notice = `复制失败：${String(err)}（请手动长按选择令牌）`;
+    }
   }
 
   private async rejectMcpPairing(id: string): Promise<void> {
