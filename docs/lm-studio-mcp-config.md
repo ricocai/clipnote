@@ -57,8 +57,7 @@ ClipNote 不做「匿名可连」。每个客户端必须先配对，拿到一�
    - 若复制失败（如剪贴板权限受限），弹窗提示「请手动长按选择令牌」，此时需从弹窗文本中手动选取。
 5. 把该 Token 用于下一步 LM Studio 的 `Authorization` 头。
 
-> Token 绑定证书代际：手机端若执行「轮换证书」，旧 Token 全部失效，需重新配对。
-> Token 有过期时间；过期后调用 `/mcp` 会返回 `401`，重新走一遍配对即可。
+> **Token 时效与存活（重要，见 §5.5）**：名义有效期 **30 天**，但**本质是「会话级、随服务关停即作废」**——只要 App 进程重启、或 MCP 服务被关闭过一次（关开关 / 退后台停服 / App 重启），旧 Token **立即整体失效**，必须重新走一遍第 2 步配对。想「配一次、重启 App 后 LM Studio 还能接着用」当前**做不到**。
 
 ---
 
@@ -148,6 +147,38 @@ curl -k -i https://192.168.43.1:8765/mcp \
 - **`401 missing or invalid bearer token`**：Token 错/过期/被轮换 → 重新配对。
 - **`403 host or origin not allowed`**：Host 头不在白名单（白名单含 `clipnote.local` 与手机自身 IP）。**已知坑（已修）**：早期版本把 `wifiManager.getIpInfo().ipAddress` 当小端序解码，导致手机 IP 被显示/写入白名单成「八位组整体倒序」（如真实 `192.168.43.132` 变成 `132.43.168.192`），用真实 IP 直连就会 403。修复版改为大端解码后，直接 IP 直连应正常；若仍 403，先用 `clipnote.local` 兜住（见 5.3），并确认手机当前 IP 与白名单一致（UI 显示的地址应等于你访问的 IP）。
 - **`404 unknown or expired session`**：会话过期，客户端会自动重新 `initialize`，无需人工处理。
+
+### 5.5 Token 有效期与「跨重启 / 多次开关服务」行为（务必知悉）
+
+**名义有效期：30 天。** 源码 `McpServiceCore.ts`：
+
+```ts
+const TOKEN_TTL_MS: number = 30 * 24 * 3600 * 1000;  // 30 天
+```
+
+从签发时刻 `issuedAtMs` 起算；30 天内须同时满足「未过期 + 未撤销 + 证书代际匹配」才有效。
+
+**但 30 天只是上限，真正约束是「纯内存 + 关停即吊销」。** 源码事实：
+
+1. **纯内存、不落盘**：`ClientCredentialStore` 用 `Map<string, StoredCredentialRecord>` 存储（`credentials.ts`），是 `McpServiceCore` 的成员变量，**不进 Preferences / 数据库**。App 进程一死，此 `Map` 直接消失。
+2. **关服务即全量吊销**：`McpServiceCore.stop()` 在关停时执行 `policy.revokeAll()` 并逐条 `credentials.revoke(...)`，把内存里所有 Token 清掉。
+3. **证书代际不强制变化（这条是好事，但被上面盖过）**：每次 `start()` 走 `certificateAuthority.current()`（读持久 `meta.json`），**不会** `rotate()`，所以「重开服务」本身不会因证书代际变化让旧 Token 失效——但内存清空 + stop 吊销已在前面两关把它杀了。
+
+**现实结论（速查表）**：
+
+| 场景 | 旧 Token 是否还有效 |
+|---|---|
+| App 多次**重启** | ❌ 失效（内存清空，必须重新配对） |
+| 多次**关闭再开启** MCP 服务（关开关 / 退后台停服） | ❌ 失效（stop 全量吊销，必须重新配对） |
+| App 没被杀、MCP 服务**一直运行未 stop**、且未超 30 天 | ✅ 有效（同一进程内 `Map` 还在、未吊销未过期） |
+
+**对 LM Studio 用户的实操含义**：
+
+- 如果你把 Mac 合盖睡眠、手机退后台、或手机 App 被杀，下次回来 LM Studio 报 `401` 是**预期行为**，不是配置坏了——重走第 2 步配对即可。
+- 若希望「配一次、跨重启长期可用」，当前实现不支持。需服务端做两处改造（属有意的安全设计，是否改需拍板）：
+  1. `ClientCredentialStore` 改为持久化到 Preferences / 数据库；
+  2. `McpServiceCore.stop()` 不再全量 `revoke`（或仅清会话、保留凭证）。
+  该改造尚未排期，如需请在项目里提需求。
 
 ---
 
