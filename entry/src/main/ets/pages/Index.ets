@@ -151,8 +151,12 @@ struct Index {
   @State notebooks: Notebook[] = [];
   /** 剪贴板直写开关（Feature 6）：开 = 回前台有新内容直接写收件箱；关 = 现状提示条 */
   @State autoInbox: boolean = true;
-  /** 批量转存开关（Feature 6 第二开关）：关 = 收件箱隐藏批量「存为笔记」入口 */
-  @State inboxBatchEnabled: boolean = true;
+  /**
+   * 批量转存开关（Feature 6 第二开关，语义 2026-10-09 调整）：
+   * 开 = 收件箱多选后点「存为笔记」**直接存入默认笔记本**，不再弹笔记本选择器；
+   * 关 = 仍弹笔记本列表让用户选择目标（批量入口始终可见，不再因开关隐藏）。
+   */
+  @State inboxBatchSaveToDefault: boolean = false;
 
   private readonly svc: AppServices = AppServices.get();
   private inboxSvc: InboxService | undefined = undefined;
@@ -232,7 +236,7 @@ struct Index {
     try {
       const settings = await this.svc.settingsStore().load();
       this.autoInbox = settings.clipboardAutoInbox;
-      this.inboxBatchEnabled = settings.inboxBatchSaveToDefault;
+      this.inboxBatchSaveToDefault = settings.inboxBatchSaveToDefault;
     } catch {
       // 读取失败保持现值，行为退化为「上一状态」
     }
@@ -560,13 +564,20 @@ struct Index {
     this.inboxSelectedIds = all;
   }
 
-  /** 批量存为笔记：多笔记本时弹选择器（默认项标注），单笔记本直存默认 */
+  /**
+   * 批量存为笔记：开关开 = 直存默认笔记本（不弹选择器）；
+   * 开关关 = 多笔记本时弹选择器（默认项标注）让用户选目标，单笔记本直存默认。
+   */
   private startBatchAccept(): void {
     if (this.inboxSelectedIds.length === 0) {
       this.notice = '先勾选要转存的内容。';
       return;
     }
     if (this.inboxSvc === undefined) {
+      return;
+    }
+    if (this.inboxBatchSaveToDefault) {
+      this.doBatchAccept(undefined);
       return;
     }
     if (this.notebooks.length > 1) {
@@ -841,11 +852,12 @@ struct Index {
             .fontSize(13)
             .fontColor('#595959')
             .layoutWeight(1)
+          // 入口常驻：开关只决定「直存默认」还是「先选笔记本」，不再隐藏入口
+          // （旧语义关=隐藏入口，用户误以为批量保存不可用）
           Button('存为笔记')
             .fontSize(14)
             .height(36)
             .enabled(this.inboxSelectedIds.length > 0)
-            .visibility(this.inboxBatchEnabled ? Visibility.Visible : Visibility.None)
             .onClick(() => {
               this.startBatchAccept();
             })

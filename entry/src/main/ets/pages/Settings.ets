@@ -63,7 +63,8 @@ struct Settings {
   @State renameNotebookText: string = '';
   /** 功能开关（第二批 Feature 6/9） */
   @State clipboardAutoInbox: boolean = true;
-  @State inboxBatchSaveToDefault: boolean = true;
+  /** 默认关：保持「弹笔记本列表让用户选」的原行为，直存默认需用户显式勾选 */
+  @State inboxBatchSaveToDefault: boolean = false;
   @State sequentialPlayback: boolean = false;
 
   private readonly perm: DevicePermissionStatus = new DevicePermissionStatus();
@@ -545,10 +546,11 @@ struct Settings {
             void this.toggleFeature({ inboxBatchSaveToDefault: on });
           })
         Column({ space: 2 }) {
-          Text('收件箱批量存为笔记')
+          Text('收件箱批量存入默认笔记本')
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
-          Text('允许在收件箱多选后一键存为笔记（多个笔记本时选择目标）。关闭后收件箱隐藏批量保存入口，单条保存不受影响。')
+          Text('开启：收件箱多选后点「存为笔记」直接存入默认笔记本，不再弹笔记本列表。'
+            + '关闭：仍弹出笔记本列表让你选择存到哪个本。批量入口两种情况下都在，单条保存不受影响。')
             .fontSize(11)
             .fontColor('#8C8C8C')
         }
