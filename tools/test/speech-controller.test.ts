@@ -26,6 +26,9 @@ import {
 class AutoDriver extends FakeTtsDriver {
   override async speak(utterance: DriverUtterance): Promise<void> {
     await super.speak(utterance);
+    // 真机引擎语义：先回调 onStart（onReady）表示真正开播，播完才 onComplete；
+    // 控制器已改为由 onReady 驱动 UI 段边界，桩必须同步这一顺序。
+    this.simulateStart(utterance.requestId);
     // FakeTtsDriver 不主动回调（由测试显式推进）；自动完成路径在入队后自行调度
     setTimeout(() => this.simulateComplete(utterance.requestId), 0);
   }
@@ -98,13 +101,21 @@ function stateOf(c: SpeechPlaybackController): PlaybackState {
  * 因此可安全盲驱。
  */
 async function driveUntil(cond: () => boolean, what: string, driver: FakeTtsDriver): Promise<void> {
+  // 引擎语义：onStart（真正开播）→ onComplete（播完），两者分两拍推进。
+  // 控制器已改为由 onReady 驱动 UI 段边界事件，否则「开播」事件会晚到一轮。
+  const announced: Set<number> = new Set<number>();
   for (let i: number = 0; i < 500; i++) {
     if (cond()) {
       return;
     }
     const req = driver.spoken[driver.spoken.length - 1];
     if (req !== undefined && driver.inflightCount > 0) {
-      driver.simulateComplete(req.requestId);
+      if (announced.has(req.requestId)) {
+        driver.simulateComplete(req.requestId);
+      } else {
+        announced.add(req.requestId);
+        driver.simulateStart(req.requestId);
+      }
     }
     await tick();
   }
@@ -396,7 +407,14 @@ test('controller：暂停=段边界作废，恢复从当前段头重读（TTS-0 
 });
 
 test('controller：中断（来电/焦点抢占）= 段边界暂停并记录原因，恢复后原因清除', async () => {
-  const driver = new FakeTtsDriver();
+  // 开播即悬停的驱动：给 onStart 但永不 onComplete —— 中断用例要让段停在在播态
+  class StartOnlyDriver extends FakeTtsDriver {
+    override async speak(utterance: DriverUtterance): Promise<void> {
+      await super.speak(utterance);
+      this.simulateStart(utterance.requestId);
+    }
+  }
+  const driver = new StartOnlyDriver();
   const engine = new SystemTtsEngine(driver);
   const { events, cb } = collector();
   const c = new SpeechPlaybackController(engine, cb);
@@ -413,10 +431,18 @@ test('controller：中断（来电/焦点抢占）= 段边界暂停并记录原�
 
   const loop2: Promise<void> = c.play();
   assert.equal(c.lastInterruptReason, undefined, '恢复后中断原因清除');
+  // 入参 semantics：onStart（真正开播）与 onComplete（播完）分两拍，
+  // 控制器已改为由 onReady 驱动 UI 段边界事件。
+  const announced: Set<number> = new Set<number>();
   while (stateOf(c) === 'playing') {
     const req = driver.spoken[driver.spoken.length - 1];
     if (req !== undefined && driver.inflightCount > 0) {
-      driver.simulateComplete(req.requestId);
+      if (announced.has(req.requestId)) {
+        driver.simulateComplete(req.requestId);
+      } else {
+        announced.add(req.requestId);
+        driver.simulateStart(req.requestId);
+      }
     }
     await tick();
   }

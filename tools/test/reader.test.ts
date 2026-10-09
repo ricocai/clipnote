@@ -72,6 +72,27 @@ test('ArkWeb 桥接全链路：reader.js tokenize 与真实 markdown-it 直出�
   assert.ok(viaBridge.some((b) => b.attachmentRef === SHA));
 });
 
+// ---------------------------------------------------------------------------
+// 正文链接（第二批需求）：纯文本 URL → 可点 A 标签；安全口径不变
+// ---------------------------------------------------------------------------
+
+test('正文 http(s) 链接渲染为可点 A 标签（免复制粘贴去浏览器）', () => {
+  const html = render('见 https://example.com/a?b=1&c=2 与 http://x.cn。');
+  assert.ok(html.includes('<a class="cl-link" href="https://example.com/a?b=1&amp;c=2">'));
+  assert.ok(html.includes('<a class="cl-link" href="http://x.cn">'), '句末句号不算进 URL');
+  // 不产生任何远程资源加载（G6 离线口径）：没有任何 img/script/iframe/link
+  assert.ok(!/<(img|script|iframe|link)\b/i.test(html));
+});
+
+test('链接化先转义后识别：注入型输入不可能带出事件属性或伪协议', () => {
+  const evil = '"><script>alert(1)</script> javascript:alert(1) https://a.cn';
+  const html = render(evil);
+  assert.ok(!html.includes('<script>'), '尖括号已转义，不可能产出脚本标签');
+  assert.ok(!/on[a-z]+\s*=/i.test(html), '不产生任何事件属性');
+  assert.ok(!html.includes('href="javascript'), '伪协议不进 href');
+  assert.ok(html.includes('https://a.cn'));
+});
+
 test('桥接配置：html:false —— 原始 HTML 不会以 html token 进入块模型', () => {
   const md = '<script>alert(1)</script>\n\n段落。';
   const payload = JSON.parse(reader.tokenize(md));

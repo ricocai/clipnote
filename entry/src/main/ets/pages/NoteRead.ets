@@ -1,5 +1,6 @@
 import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
+import { Want, common } from '@kit.AbilityKit';
 import {
   AppContextHolder,
   ATTACHMENT_SCHEME,
@@ -337,6 +338,8 @@ struct NoteRead {
    * 渲染未完成时不处理（renderDocument 完成后自行走同一套接管逻辑）。
    */
   onPageShow(): void {
+    // 登记本页可见性：浮标据此判定「已在该篇阅读页」→ 不再重复压页
+    this.global.markReadVisible(this.noteId);
     if (!this.planReady || !this.canSpeak()) {
       return;
     }
@@ -355,8 +358,14 @@ struct NoteRead {
   }
 
   aboutToDisappear(): void {
+    this.global.clearReadVisible(this.noteId);
     this.global.detachUi();
     this.highlightBlock(-1);
+  }
+
+  onPageHide(): void {
+    // 注销可见性：否则压上新页后浮标仍误判「已在该篇阅读页」而不跳转
+    this.global.clearReadVisible(this.noteId);
   }
 
   /** 朗读入口（Feature 5）：本篇已有活动播放（重进）接管续播，否则换篇装载后起播 */
@@ -519,6 +528,44 @@ struct NoteRead {
       return blockedResponse();
     }
     return undefined;
+  }
+
+  /**
+   * 正文链接点击 → 交系统浏览器打开（第二批需求：免去「复制 URL → 切浏览器 → 粘贴」）。
+   *
+   * 边界：Web 内**仍然一律不发起 http(s) 请求**（G6 离线口径不变——远程图/脚本
+   * 继续被 interceptRequest 404）。这里拦的是**用户用手势点出来的导航**，
+   * 由 want + ACTION_VIEW 交系统浏览器进程完成，本应用的网络面没有任何扩大。
+   */
+  private interceptUrlLoad(event: OnLoadInterceptEvent): boolean {
+    let url: string = '';
+    try {
+      url = event.data.getRequestUrl();
+    } catch {
+      return false; // 取不到 URL：按常规处理（不可能 — http(s) 资源已被拦截器 404）
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return false; // attachment:// / resource:// 等照常加载
+    }
+    if (!this.openInBrowser(url)) {
+      this.notice = '未能打开浏览器。';
+    }
+    return true; // 已接管：Web 不得自行导航
+  }
+
+  private openInBrowser(url: string): boolean {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      const want: Want = {
+        action: 'ohos.want.action.viewData',
+        entities: ['entity.system.browsable'],
+        uri: url,
+      };
+      ctx.startAbility(want);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   build() {
@@ -736,6 +783,9 @@ struct NoteRead {
           })
           .onInterceptRequest((event: OnInterceptRequestEvent) => {
             return this.interceptRequest(event);
+          })
+          .onLoadIntercept((event: OnLoadInterceptEvent) => {
+            return this.interceptUrlLoad(event);
           })
       } else {
         Text('加载中…')

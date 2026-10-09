@@ -61,19 +61,19 @@ export struct PlayingBar {
    * 状态更新与段落高亮（朗读还在出声，控件与高亮却不动）。
    */
   private gotoPlayingNote(): void {
-    try {
-      const st = router.getState();
-      if (st.path === 'pages/NoteRead') {
-        const p = st.params as Record<string, string> | undefined;
-        if (p !== undefined && p !== null && p['noteId'] === this.playingId) {
-          return; // 已在本页：无动作，页面上回归自身控制条
-        }
-      }
-    } catch {
-      // 路由状态获取失败：按未知页面处理，走 push（结果同上一次行为）
+    const g = AppServices.get().globalPlayback();
+    // 本页就是该篇的阅读页（由页面自己向 GlobalPlayback 登记，不依赖
+    // router.getState().params —— 真机实测 params 取值恒 undefined，
+    // 旧实现的去重判定失效，点 N 次压 N 层，返回要按 N 次才回列表）
+    if (g.visibleReadingNoteId === this.playingId) {
+      return;
     }
     const params: Record<string, string> = { 'noteId': this.playingId };
-    router.pushUrl({ url: 'pages/NoteRead', params: params });
+    try {
+      router.pushUrl({ url: 'pages/NoteRead', params: params });
+    } catch {
+      // 路由异常（栈损坏等极端场景）：本轮忽略，浮标仍在，可再点
+    }
   }
 
   build() {

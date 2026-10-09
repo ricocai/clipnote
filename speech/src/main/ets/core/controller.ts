@@ -328,11 +328,29 @@ export class SpeechPlaybackController {
         const gen: number = ++issuedGeneration; // 进程级签发（见文件头说明），控制器实例只记录本轮回合
         this.generation = gen;
         this.activeGeneration = gen;
-        this.callbacks.onSegmentStart(item);
+        // 高亮/UI 必须由引擎「真正开播」（onReady）驱动，不能在提交段时就发：
+        // 真机实测系统 TTS 的上一段 onComplete 早于其实际发声结束，若在提交
+        // 时刻广播 onSegmentStart，UI 高亮会跑到声音前面去（用户看到的高亮段落
+        // 早于正在朗读的段落），且 differential 会随段数累积。
+        // 兜底：极少数引擎不给 onReady —— 该段 speak resolve 仍未广播则补发一次，
+        // UI 不至于停在上一段。
+        let started: boolean = false;
+        const notifySegmentStart = (): void => {
+          if (started || myEpoch !== this.epoch) {
+            return;
+          }
+          started = true;
+          this.callbacks.onSegmentStart(item);
+        };
         const cbs: TtsCallbacks = {
-          onReady: (): void => undefined,
+          onReady: (g: number): void => {
+            if (g === this.generation && myEpoch === this.epoch) {
+              notifySegmentStart();
+            }
+          },
           onProgress: (g: number, playedChars: number): void => {
             if (g === this.generation && myEpoch === this.epoch) {
+              notifySegmentStart(); // 有进度即已开播（onReady 缺失机型的二次兜底）
               this.callbacks.onProgress(item, playedChars);
             }
           },
@@ -345,6 +363,7 @@ export class SpeechPlaybackController {
             cbs,
           );
         } catch (err) {
+          notifySegmentStart(); // 失败/取消也要落在正确的段上（UI 停在失败段而非上一段）
           if (myEpoch !== this.epoch) {
             return; // 已换轮，错误是旧轮残留，丢弃
           }
@@ -356,6 +375,7 @@ export class SpeechPlaybackController {
           return;
         }
         this.activeGeneration = undefined;
+        notifySegmentStart(); // 引擎未给 onReady/onProgress 时的兜底：至少走到本段
         if (myEpoch !== this.epoch || this.stateValue !== 'playing') {
           return; // 暂停/停止/换文已介入
         }

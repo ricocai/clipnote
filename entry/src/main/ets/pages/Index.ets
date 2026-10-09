@@ -595,12 +595,26 @@ struct Index {
     try {
       const ids: string[] = this.inboxSelectedIds.slice();
       const r = await this.inboxSvc.acceptMany(ids, notebookId);
+      // 逐条如实反馈去向（此前 skippedNotPending 完全静默：条目既没进笔记本、
+      // 也不在收件箱里，用户只能看到"少了一条"，无法判断发生了什么）。
       const parts: string[] = [`已转存 ${r.acceptedIds.length} 条为笔记`];
       if (r.skippedSensitive.length > 0) {
         parts.push(`${r.skippedSensitive.length} 条敏感内容未批量转存（请逐条处理）`);
       }
+      if (r.skippedNotPending.length > 0) {
+        parts.push(`${r.skippedNotPending.length} 条已不在待处理状态（已被处理或已过期清理），未重复转存`);
+      }
       if (r.failed.length > 0) {
         parts.push(`${r.failed.length} 条转存失败（见日志）`);
+      }
+      // 转出来的笔记标题列出，供用户直接核对"是不是都有了"
+      if (r.notes.length > 0 && r.notes.length <= 3) {
+        const names: string[] = [];
+        for (let i: number = 0; i < r.notes.length; i++) {
+          const n = r.notes[i];
+          names.push(n.title.length > 12 ? `${n.title.slice(0, 12)}…` : n.title);
+        }
+        parts.push(`《${names.join('》《')}》`);
       }
       this.notice = `${parts.join('；')}。`;
       this.exitInboxSelecting();

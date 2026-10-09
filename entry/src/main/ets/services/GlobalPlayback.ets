@@ -70,6 +70,14 @@ export class GlobalPlayback {
    */
   private curSegment: number = -1;
   private curBlock: number = -1;
+  /**
+   * 当前**可见**的阅读页笔记 id（由 NoteRead.onPageShow 登记、onPageHide 注销）。
+   * 用于取代 `router.getState()` 判断「是否已经在这篇的阅读页上」——
+   * 真机实测：路由 params 在本机全限定类型下取不到值（`p['noteId']` 恒 undefined），
+   * 浮标去重复页判定失效，点 N 次就压 N 层，返回要按 N 次才回列表。
+   * 进程级单例自维护可见性，不依赖任何路由 API 的形态差异。
+   */
+  private visibleReadNoteId: string = '';
   private readonly listeners: PlaybackListener[] = [];
   /** 换篇计数：AVSession assetId 随之自增以触发锁屏元数据刷新 */
   private ordinal: number = 0;
@@ -104,6 +112,28 @@ export class GlobalPlayback {
   /** 当前在播段所在块下标（-1 = 无）。晚绑定的页面用它补一次段落高亮 */
   get currentBlockIndex(): number {
     return this.curBlock;
+  }
+
+  /** 当前**可见**的阅读页笔记 id（由 NoteRead.onPageShow/onPageHide 登记注销） */
+  get visibleReadingNoteId(): string {
+    return this.visibleReadNoteId;
+  }
+
+  /**
+   * 阅读页可见性登记（浮标去重复页的唯一权威来源）。
+   * 取代 `router.getState()` 的 params 取值：真机实测本机路由 params 取不到
+   * noteId（取值恒 undefined），导致「已在该篇阅读页」判定失效、每点一次浮标
+   * 就压一层，返回要按 N 次才回列表。这里由页面自己登记，与路由形态无关。
+   */
+  markReadVisible(noteId: string): void {
+    this.visibleReadNoteId = noteId;
+  }
+
+  /** 注销可见性（退到后台/压新页）；只清与自己同 id 的标记，避免晚一场 omission */
+  clearReadVisible(noteId: string): void {
+    if (this.visibleReadNoteId === noteId) {
+      this.visibleReadNoteId = '';
+    }
   }
 
   // ---- 状态监听（浮标 / 列表高亮） ----
@@ -308,8 +338,11 @@ export class GlobalPlayback {
   private async gotoNextNote(next: Note): Promise<void> {
     const params: Record<string, string> = { 'noteId': next.id, 'autoplay': '1' };
     try {
-      const st = router.getState();
-      if (st.path === 'pages/NoteRead') {
+      // 判定「当前是否在阅读页上」改用页面自己登记的可见性，不再依赖
+      // router.getState().path：真机实测该判定不成立（path 形态与代码假设不同），
+      // 换篇每次都走 pushUrl —— 读几篇就叠几层，返回要按 N 次才回列表。
+      // 有可见阅读页 → 原地 replace（栈深不变）；否则 push（不吞掉用户所在页）。
+      if (this.visibleReadNoteId.length > 0) {
         await router.replaceUrl({ url: 'pages/NoteRead', params: params });
       } else {
         await router.pushUrl({ url: 'pages/NoteRead', params: params });

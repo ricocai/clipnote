@@ -44,6 +44,31 @@
   }
 
   /**
+   * 正文里的 http(s) 链接 → 可点 A 标签（第二批需求：免「复制链接 → 打开浏览器 → 粘贴」）。
+   *
+   * 安全口径（G6 不变式）：入参必须是**已经 escapeHtml 过**的文本——
+   * 先转义再识别，识别产物只可能是本文件拼出的 <a href class>，绝不携带
+   * 输入中的任何属性；href 值再次 escapeHtml（其中已含 &amp; 转义形态，
+   * 再转义也是同一批字符，不会引入新的尖括号/引号）。
+   * 也不产 remote 资源加载（A 标签导航由 ArkTS 侧 onUrlLoadIntercept 拦下
+   * 交系统浏览器，Web 内不发起任何 http(s) 请求）。
+   */
+  var LINK_RE = /(https?:\/\/[^\s<>"']+)/g;
+  function linkify(escaped) {
+    return String(escaped).replace(LINK_RE, function (m) {
+      var href = escapeHtml(m.replace(/&amp;/g, '&'));
+      // 结尾标点（中英文句读）不属于 URL
+      var tail = '';
+      var m2 = href;
+      while (m2.length > 0 && /[)\]}。，、；：！？.,;:!?]$/.test(m2)) {
+        tail = m2.slice(-1) + tail;
+        m2 = m2.slice(0, -1);
+      }
+      return '<a class="cl-link" href="' + m2 + '">' + m2 + '</a>' + escapeHtml(tail);
+    });
+  }
+
+  /**
    * markdown-it Token → 桥接 Schema 子集（与 common/src/main/ets/core/markdown.ts
    * 的 MdToken 成对维护；两边字段集必须一致，ArkTS 侧 mdTokensFromJson 按此还原）。
    * 只保留真正消费的字段，序列化体积最小化（长文性能口径）。
@@ -121,19 +146,19 @@
       switch (b.type) {
         case 'heading': {
           var level = b.level >= 1 && b.level <= 6 ? b.level : 1;
-          out.push('<h' + level + ' data-cl-i="' + i + '">' + escapeHtml(b.text) + '</h' + level + '>');
+          out.push('<h' + level + ' data-cl-i="' + i + '">' + linkify(escapeHtml(b.text)) + '</h' + level + '>');
           i += 1;
           break;
         }
         case 'paragraph':
-          out.push('<p data-cl-i="' + i + '">' + escapeHtml(b.text) + '</p>');
+          out.push('<p data-cl-i="' + i + '">' + linkify(escapeHtml(b.text)) + '</p>');
           i += 1;
           break;
         case 'list_item': {
           // 连续 LIST_ITEM 合并为一个 <ul>（块模型按条目产出）
           out.push('<ul data-cl-i="' + i + '">');
           while (i < blocks.length && blocks[i].type === 'list_item') {
-            out.push('<li>' + escapeHtml(blocks[i].text) + '</li>');
+            out.push('<li>' + linkify(escapeHtml(blocks[i].text)) + '</li>');
             i += 1;
           }
           out.push('</ul>');
@@ -149,7 +174,7 @@
           break;
         }
         case 'quote':
-          out.push('<blockquote data-cl-i="' + i + '">' + escapeHtmlWithBreaks(b.text) + '</blockquote>');
+          out.push('<blockquote data-cl-i="' + i + '">' + linkify(escapeHtmlWithBreaks(b.text)) + '</blockquote>');
           i += 1;
           break;
         case 'table':
