@@ -303,20 +303,10 @@ struct TrashPage {
     await this.refresh();
   }
 
+  /** 单张已删笔记卡片：由 build() 的 ForEach 逐条包成 ListItem（ListItem 仅支持单子组件，多子节点会叠放） */
   @Builder
-  noteSection() {
-    Text(`已删笔记（${this.noteRows.length}）`)
-      .fontSize(14)
-      .fontWeight(FontWeight.Medium)
-      .width('100%')
-    if (this.noteRows.length === 0) {
-      Text('无')
-        .fontSize(12)
-        .fontColor('#8C8C8C')
-        .width('100%')
-    } else {
-      ForEach(this.noteRows, (row: TrashNoteRow) => {
-        Column({ space: 4 }) {
+  noteCard(row: TrashNoteRow) {
+    Column({ space: 4 }) {
           Row({ space: 8 }) {
             if (this.selecting) {
               Text(this.selectedNoteIds.indexOf(row.id) >= 0 ? '☑' : '☐')
@@ -368,24 +358,12 @@ struct TrashPage {
             this.toggleSelectNote(row.id);
           }
         })
-      }, (row: TrashNoteRow) => row.id)
-    }
   }
 
+  /** 单张已弃收件箱卡片：同 noteCard，由 ForEach 逐条包 ListItem */
   @Builder
-  inboxSection() {
-    Text(`已弃收件箱（${this.inboxRows.length}）`)
-      .fontSize(14)
-      .fontWeight(FontWeight.Medium)
-      .width('100%')
-    if (this.inboxRows.length === 0) {
-      Text('无')
-        .fontSize(12)
-        .fontColor('#8C8C8C')
-        .width('100%')
-    } else {
-      ForEach(this.inboxRows, (row: TrashInboxRow) => {
-        Column({ space: 4 }) {
+  inboxCard(row: TrashInboxRow) {
+    Column({ space: 4 }) {
           Row({ space: 8 }) {
             if (this.selecting) {
               Text(this.selectedInboxIds.indexOf(row.id) >= 0 ? '☑' : '☐')
@@ -431,8 +409,6 @@ struct TrashPage {
             this.toggleSelectInbox(row.id);
           }
         })
-      }, (row: TrashInboxRow) => row.id)
-    }
   }
 
   build() {
@@ -494,11 +470,43 @@ struct TrashPage {
       } else {
         List({ space: 8 }) {
           ListItem() {
-            this.noteSection()
+            Text(`已删笔记（${this.noteRows.length}）`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .width('100%')
           }
+          if (this.noteRows.length === 0) {
+            ListItem() {
+              Text('无')
+                .fontSize(12)
+                .fontColor('#8C8C8C')
+                .width('100%')
+            }
+          }
+          ForEach(this.noteRows, (row: TrashNoteRow) => {
+            ListItem() {
+              this.noteCard(row)
+            }
+          }, (row: TrashNoteRow) => row.id)
           ListItem() {
-            this.inboxSection()
+            Text(`已弃收件箱（${this.inboxRows.length}）`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Medium)
+              .width('100%')
           }
+          if (this.inboxRows.length === 0) {
+            ListItem() {
+              Text('无')
+                .fontSize(12)
+                .fontColor('#8C8C8C')
+                .width('100%')
+            }
+          }
+          ForEach(this.inboxRows, (row: TrashInboxRow) => {
+            ListItem() {
+              this.inboxCard(row)
+            }
+          }, (row: TrashInboxRow) => row.id)
         }
         .layoutWeight(1)
         .width('100%')
