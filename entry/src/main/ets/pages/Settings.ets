@@ -69,6 +69,8 @@ struct Settings {
 
   private readonly perm: DevicePermissionStatus = new DevicePermissionStatus();
   private readonly svc: AppServices = AppServices.get();
+  /** MCP 挂起请求/授权客户端近实时刷新定时器句柄（仅前台设置页存活期间轮询） */
+  private mcpPollTimer: number = 0;
 
   aboutToAppear(): void {
     this.refresh();
@@ -79,6 +81,15 @@ struct Settings {
     this.refreshMcp().catch((err: Error) => {
       this.notice = `MCP 状态读取失败：${String(err)}`;
     });
+    // Host 提交配对码后无需手动点「刷新配对状态」即可看到确认按钮：
+    // MCP 运行期间每 1.2s 就近实时刷新挂起列表与已授权客户端。
+    // 普通定时器不后台保障（设计 §4.1 明示），符合"仅前台监听"的边界。
+    this.mcpPollTimer = setInterval((): void => {
+      if (this.mcpRunning) {
+        // 吞掉错误：轮询不应覆盖用户可见的 notice，也不应因瞬时读取失败刷屏
+        this.refreshMcp().catch((): void => undefined);
+      }
+    }, 1200);
     this.svc.settingsStore().load().then((settings): void => {
       this.clipboardAutoInbox = settings.clipboardAutoInbox;
       this.inboxBatchSaveToDefault = settings.inboxBatchSaveToDefault;
@@ -86,6 +97,13 @@ struct Settings {
       // 全局播放的连读开关同步（避免每次连读查询 preferences）
       this.svc.globalPlayback().refreshSettings(settings.sequentialPlayback);
     }).catch((): void => undefined);
+  }
+
+  aboutToDisappear(): void {
+    if (this.mcpPollTimer !== 0) {
+      clearInterval(this.mcpPollTimer);
+      this.mcpPollTimer = 0;
+    }
   }
 
   // -------------------------------------------------------------------------
